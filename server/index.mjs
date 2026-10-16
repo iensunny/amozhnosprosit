@@ -7,6 +7,7 @@ import cron from "node-cron";
 import { Driver } from "@ydbjs/core";
 import { query } from "@ydbjs/query";
 import { ServiceAccountCredentialsProvider } from "@ydbjs/auth-yandex-cloud";
+import { MetadataCredentialsProvider } from "@ydbjs/auth/metadata";
 import worker from "../recovery/cloudflare-worker-2026-10-15.mjs";
 import { D1YdbAdapter } from "./d1-ydb-adapter.mjs";
 
@@ -55,20 +56,28 @@ async function sendNodeResponse(response, result) {
   Readable.fromWeb(response.body).pipe(result);
 }
 
-const required = ["YDB_CONNECTION_STRING", "YDB_SERVICE_ACCOUNT_KEY", "MAX_BOT_TOKEN"];
+const required = ["YDB_CONNECTION_STRING", "MAX_BOT_TOKEN"];
 for (const variable of required) {
   if (!process.env[variable]) throw new Error(`Missing required environment variable: ${variable}`);
 }
 
-let serviceAccountKey;
-try {
-  serviceAccountKey = JSON.parse(process.env.YDB_SERVICE_ACCOUNT_KEY);
-} catch {
-  throw new Error("YDB_SERVICE_ACCOUNT_KEY must contain the authorized-key JSON from Yandex Cloud");
+let credentialsProvider;
+if (process.env.YDB_SERVICE_ACCOUNT_KEY) {
+  let serviceAccountKey;
+  try {
+    serviceAccountKey = JSON.parse(process.env.YDB_SERVICE_ACCOUNT_KEY);
+  } catch {
+    throw new Error("YDB_SERVICE_ACCOUNT_KEY must contain the authorized-key JSON from Yandex Cloud");
+  }
+  credentialsProvider = new ServiceAccountCredentialsProvider(serviceAccountKey);
+} else {
+  // In Yandex Serverless Containers the attached service account is exposed
+  // through the metadata service, so no long-lived key is baked into the app.
+  credentialsProvider = new MetadataCredentialsProvider();
 }
 
 const driver = new Driver(process.env.YDB_CONNECTION_STRING, {
-  credentialsProvider: new ServiceAccountCredentialsProvider(serviceAccountKey)
+  credentialsProvider
 });
 await driver.ready();
 const ydb = query(driver);
