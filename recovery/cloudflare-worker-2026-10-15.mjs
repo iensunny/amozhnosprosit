@@ -87,8 +87,20 @@ async function verifyMaxInitData(initData, botToken) {
   }
 }
 __name(verifyMaxInitData, "verifyMaxInitData");
+function maxInitDataFromHeader(value) {
+  if (typeof value !== "string" || !value.startsWith("b64:")) return value;
+  try {
+    const encoded = value.slice(4).replace(/-/g, "+").replace(/_/g, "/");
+    const padded = encoded + "=".repeat((4 - encoded.length % 4) % 4);
+    const bytes = Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return "";
+  }
+}
+__name(maxInitDataFromHeader, "maxInitDataFromHeader");
 async function maxIdentityFromRequest(request, env) {
-  const initData = request.headers.get("X-MAX-Init-Data");
+  const initData = maxInitDataFromHeader(request.headers.get("X-MAX-Init-Data"));
   if (!initData) return null;
   const identity = await verifyMaxInitData(initData, env.MAX_BOT_TOKEN);
   if (!identity) throw new Error("MAX authentication failed");

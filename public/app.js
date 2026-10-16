@@ -100,6 +100,18 @@ function maxInitData() {
   const value = window.WebApp?.initData;
   return typeof value === 'string' && value.length > 0 ? value : '';
 }
+function maxInitDataHeader() {
+  const value = maxInitData();
+  if (!value) return '';
+  // MAX may supply characters which a browser does not allow in HTTP header
+  // values. Transfer the signed payload losslessly in a header-safe form.
+  try {
+    const bytes = new TextEncoder().encode(value);
+    let binary = '';
+    bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+    return `b64:${btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
+  } catch { return ''; }
+}
 let state = { profile: null, circles: [], activeCircleId: null, diary: [], marks: {}, privateNotes: {}, introAccepted: false, rulesSeen: false, memberToken: null, invitationToken: null };
 let screen = 'splash';
 let incomingInvite = null;
@@ -410,7 +422,7 @@ async function previewRequest(path, options = {}) {
 }
 async function request(path, options = {}) {
   if (LOCAL_PREVIEW) return previewRequest(path, options);
-  const initData = maxInitData();
+  const initData = maxInitDataHeader();
   const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...(state.memberToken ? { Authorization: `Bearer ${state.memberToken}` } : {}), ...(initData ? { 'X-MAX-Init-Data': initData } : {}), ...(options.headers || {}) } });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Не удалось выполнить действие');
