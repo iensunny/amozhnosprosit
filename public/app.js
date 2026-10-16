@@ -111,6 +111,8 @@ let conversationDialog = null;
 let questionDialog = null;
 let deleteDialog = false;
 let shareDialog = '';
+let flashMessage = '';
+let flashTimer = null;
 
 // Numbers refer to the source deck. Every question is included in the rotation.
 const questionTiers = {
@@ -145,7 +147,13 @@ function pluralForm(number, one, few, many) {
 }
 const dateLabel = (value) => value ? new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(value)) : '';
 function save() { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { toast('Браузер не смог сохранить данные'); } }
-function toast(message) { if (message) window.alert(message); }
+function toast(message) {
+  if (!message) return;
+  flashMessage = String(message);
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { flashMessage = ''; render(); }, 5000);
+  render();
+}
 function go(next) {
   const pair = circle();
   if (['home', 'days', 'diary', 'after-mark'].includes(next) && pair?.status !== 'active') next = pair ? 'waiting' : 'invite-how';
@@ -253,7 +261,7 @@ function card(content, deco = 'corner', className = '') {
   return `<article class="paper-card ${deco === 'plant' ? 'plant-card' : ''} ${className}">${art}${content}</article>`;
 }
 function qCard(title, subtitle = '', deco = 'corner', className = '') { return card(`<p class="card-question">${title}</p>${subtitle ? `<p class="card-subtitle">${subtitle}</p>` : ''}`, deco, className); }
-function shell(inner) { return `<section class="screen">${inner}${dialogMarkup()}</section>`; }
+function shell(inner) { return `<section class="screen">${inner}${flashMessage ? `<p class="flash-message" role="status">${esc(flashMessage)}</p>` : ''}${dialogMarkup()}</section>`; }
 
 function draw() {
   const pair = circle();
