@@ -2,11 +2,17 @@
   "name": "amozhnosprosit",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
     "start": "node server/index.mjs",
     "dev": "node --watch server/index.mjs"
   },
   "dependencies": {
+    "@ydbjs/auth-yandex-cloud": "^0.2.0",
+    "@ydbjs/core": "^6.3.1",
+    "@ydbjs/query": "^6.3.0",
     "node-cron": "^4.2.1",
     "postgres": "^3.4.7"
   }

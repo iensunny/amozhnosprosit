@@ -4,9 +4,11 @@ import { createServer } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
 import { Readable } from "node:stream";
 import cron from "node-cron";
-import postgres from "postgres";
+import { Driver } from "@ydbjs/core";
+import { query } from "@ydbjs/query";
+import { ServiceAccountCredentialsProvider } from "@ydbjs/auth-yandex-cloud";
 import worker from "../recovery/cloudflare-worker-2026-10-15.mjs";
-import { D1PostgresAdapter } from "./d1-postgres-adapter.mjs";
+import { D1YdbAdapter } from "./d1-ydb-adapter.mjs";
 
 const root = resolve("public");
 const mime = {
@@ -51,15 +53,26 @@ async function sendNodeResponse(response, result) {
   Readable.fromWeb(response.body).pipe(result);
 }
 
-const required = ["DATABASE_URL", "MAX_BOT_TOKEN"];
+const required = ["YDB_CONNECTION_STRING", "YDB_SERVICE_ACCOUNT_KEY", "MAX_BOT_TOKEN"];
 for (const variable of required) {
   if (!process.env[variable]) throw new Error(`Missing required environment variable: ${variable}`);
 }
 
-const sql = postgres(process.env.DATABASE_URL);
+let serviceAccountKey;
+try {
+  serviceAccountKey = JSON.parse(process.env.YDB_SERVICE_ACCOUNT_KEY);
+} catch {
+  throw new Error("YDB_SERVICE_ACCOUNT_KEY must contain the authorized-key JSON from Yandex Cloud");
+}
+
+const driver = new Driver(process.env.YDB_CONNECTION_STRING, {
+  credentialsProvider: new ServiceAccountCredentialsProvider(serviceAccountKey)
+});
+await driver.ready();
+const ydb = query(driver);
 const env = {
   ASSETS: { fetch: staticFetch },
-  DB: new D1PostgresAdapter(sql),
+  DB: new D1YdbAdapter(ydb),
   MAX_BOT_NAME: process.env.MAX_BOT_NAME || "se14681938_bot",
   MAX_BOT_TOKEN: process.env.MAX_BOT_TOKEN
 };
@@ -81,3 +94,11 @@ cron.schedule("0 * * * *", () => {
 server.listen(Number(process.env.PORT || 8080), "0.0.0.0", () => {
   console.log(`Listening on port ${process.env.PORT || 8080}`);
 });
+
+async function shutdown() {
+  await driver.close();
+  server.close();
+}
+
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
