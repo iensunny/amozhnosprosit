@@ -110,6 +110,7 @@ let openingQuestion = false;
 let conversationDialog = null;
 let questionDialog = null;
 let deleteDialog = false;
+let shareDialog = '';
 
 // Numbers refer to the source deck. Every question is included in the rotation.
 const questionTiers = {
@@ -309,6 +310,7 @@ function draw() {
   return shell(`${logo()}${nav('home')}`);
 }
 function dialogMarkup() {
+  if (shareDialog) return `<div class="action-sheet invite-link-sheet"><section><h2>Ссылка приглашения</h2><p>Нажмите на ссылку, скопируйте её и отправьте близкому человеку.</p><textarea id="invite-link" readonly aria-label="Ссылка приглашения">${esc(shareDialog)}</textarea><button class="sheet-link" data-action="close-dialog">Готово</button></section></div>`;
   if (typeof deleteDialog !== 'undefined' && deleteDialog) return `<div class="action-sheet"><section><h2>Удалить мои данные?</h2><p>Имя, доступ к этой паре и данные на этом устройстве будут удалены. У близкого человека его данные останутся.</p><button class="button button-primary" data-action="confirm-reset">Удалить мои данные</button><button class="sheet-link" data-action="close-dialog">Отмена</button></section></div>`;
   if (typeof questionDialog !== 'undefined' && questionDialog) return `<div class="action-sheet"><section><h2>${questionDialog.type === 'replace' ? 'Другой вопрос?' : 'Пропустить вопрос?'}</h2><p>${questionDialog.type === 'replace' ? 'Можно заменить вопрос один раз. Первый вопрос не сохранится в дневнике.' : 'Сегодня будет без вопроса. Новый появится завтра.'}</p><button class="button button-primary" data-action="confirm-question-choice">${questionDialog.type === 'replace' ? 'Показать другой' : 'Пропустить'}</button><button class="sheet-link" data-action="close-dialog">Оставить как есть</button></section></div>`;
   if (typeof conversationDialog === 'undefined' || !conversationDialog) return '';
@@ -477,12 +479,11 @@ async function loadPrivateNotes() {
   } catch {}
 }
 async function share(url) {
-  let copied = false;
-  try {
-    if (navigator.clipboard) { await navigator.clipboard.writeText(url); copied = true; }
-  } catch {}
-  try { if (navigator.share) { await navigator.share({ url }); return; } } catch {}
-  if (!copied) window.prompt('Ссылка приглашения', url);
+  try { await navigator.clipboard?.writeText(url); } catch {}
+  // Always show the actual URL. Browser-provided sharing can complete without
+  // a visible sheet, which makes an invitation look as if it was never made.
+  shareDialog = url;
+  render();
 }
 
 async function shareQuestionCard() {
@@ -523,7 +524,7 @@ async function action(button) {
   }
   if (type === 'conversation-talked') { conversationDialog.stage = 'note'; render(); return; }
   if (type === 'conversation-not-yet') { conversationDialog.stage = 'not-yet'; render(); return; }
-  if (type === 'close-dialog') { conversationDialog = null; questionDialog = null; deleteDialog = false; render(); return; }
+  if (type === 'close-dialog') { conversationDialog = null; questionDialog = null; deleteDialog = false; shareDialog = ''; render(); return; }
   if (type === 'save-conversation') {
     const prompt = dailyQuestion(pair), text = $('#private-note')?.value || '';
     if (!prompt) return;
