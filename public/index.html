@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f4efe8" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>а можно спросить? — вопрос дня</title>
+    <link rel="stylesheet" href="styles.css?v=20261016-2" />
+  </head>
+  <body>
+    <main class="phone" id="app" aria-live="polite"><p id="boot-status" style="margin:0;padding:48vh 24px 0;text-align:center;color:#18354d;font:16px/1.45 Georgia,serif">Открываем приложение…</p></main>
+    <script>
+      (function () {
+        var booted = false;
+        var shown = false;
+        function showProblem(code) {
+          if (shown) return;
+          shown = true;
+          var app = document.getElementById('app');
+          if (!app) return;
+          var width = window.innerWidth || document.documentElement.clientWidth || 0;
+          var height = window.innerHeight || document.documentElement.clientHeight || 0;
+          app.innerHTML = '<section style="box-sizing:border-box;min-height:100vh;padding:42vh 24px 0;text-align:center;color:#18354d;font:16px/1.45 Georgia,serif"><strong>Не удалось открыть приложение</strong><br><span style="font-size:13px">Код: ' + code + ' · экран: ' + width + '×' + height + '</span><br><span style="font-size:13px">Сделайте, пожалуйста, скриншот этого экрана.</span></section>';
+        }
+        window.__amozhnoBooted = function () { booted = true; };
+        window.onerror = function () { showProblem('E-JS'); };
+        window.setTimeout(function () { if (!booted) showProblem('E-BOOT'); }, 6000);
+      }());
+    </script>
+    <script src="https://st.max.ru/js/max-web-app.js" defer></script>
+    <script src="vendor/html2canvas.min.js" defer></script>
+    <script src="app.js?v=20261016-1" defer></script>
+  </body>
+</html>
+

@@ -1,0 +1,13 @@
+{
+  "name": "amozhnosprosit",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.mjs",
+    "dev": "node --watch server/index.mjs"
+  },
+  "dependencies": {
+    "node-cron": "^4.2.1",
+    "postgres": "^3.4.7"
+  }
+}
