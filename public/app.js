@@ -125,6 +125,7 @@ let deleteDialog = false;
 let shareDialog = '';
 let flashMessage = '';
 let flashTimer = null;
+let creatingCircle = false;
 
 // Numbers refer to the source deck. Every question is included in the rotation.
 const questionTiers = {
@@ -427,8 +428,19 @@ async function previewRequest(path, options = {}) {
 }
 async function request(path, options = {}) {
   if (LOCAL_PREVIEW) return previewRequest(path, options);
+  // MAX's embedded browser can reject a request before it leaves the app when
+  // it carries our custom identity header. For the first, unauthenticated
+  // requests we send the same signed payload inside the HTTPS JSON body; the
+  // server verifies it exactly as it verifies the header value.
+  const { maxIdentityInBody = false, ...fetchOptions } = options;
   const initData = maxInitDataHeader();
-  const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...(state.memberToken ? { Authorization: `Bearer ${state.memberToken}` } : {}), ...(initData ? { 'X-MAX-Init-Data': initData } : {}), ...(options.headers || {}) } });
+  let body = fetchOptions.body;
+  if (maxIdentityInBody && initData) {
+    let payload = {};
+    try { payload = body ? JSON.parse(body) : {}; } catch { /* validated by the server below */ }
+    body = JSON.stringify({ ...payload, _maxInitData: initData });
+  }
+  const response = await fetch(path, { ...fetchOptions, body, headers: { 'Content-Type': 'application/json', ...(state.memberToken ? { Authorization: `Bearer ${state.memberToken}` } : {}), ...(!maxIdentityInBody && initData ? { 'X-MAX-Init-Data': initData } : {}), ...(fetchOptions.headers || {}) } });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Не удалось выполнить действие');
   return data;
@@ -436,7 +448,7 @@ async function request(path, options = {}) {
 async function restoreMaxMember() {
   if (!maxInitData()) return false;
   try {
-    const result = await request('/api/max/restore', { method: 'POST' });
+    const result = await request('/api/max/restore', { method: 'POST', maxIdentityInBody: true });
     if (!result.linked) return false;
     state.profile = result.member;
     state.memberToken = result.memberToken;
@@ -465,12 +477,15 @@ async function ensureQuestionOpened() {
 }
 async function createCircle() {
   if (circle()) { go('invite-ready'); return; }
+  if (creatingCircle) return;
+  creatingCircle = true;
   try {
     const id = crypto.randomUUID?.() || `link-${Date.now()}`;
-    const result = await request('/api/pairs', { method: 'POST', body: JSON.stringify({ id, member: state.profile, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
+    const result = await request('/api/pairs', { method: 'POST', maxIdentityInBody: true, body: JSON.stringify({ id, member: state.profile, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
     state.memberToken = result.memberToken; state.invitationToken = result.invitationToken; updatePair(result.pair);
     go('invite-ready');
-  } catch (error) { toast(error.message); }
+  } catch (error) { toast('Не удалось создать приглашение. Нажмите «Понятно» ещё раз.'); }
+  finally { creatingCircle = false; }
 }
 function parseInvite() {
   const value = new URLSearchParams(location.search).get('invite');
@@ -486,7 +501,7 @@ async function acceptInvite(name, role) {
   const source = incomingInvite;
   const me = { id: `member-${Date.now()}`, name: String(name).trim(), role };
   try {
-    const result = await request(`/api/pairs/${encodeURIComponent(source.id)}/accept`, { method: 'POST', body: JSON.stringify({ member: me, invitationToken: source.token }) });
+    const result = await request(`/api/pairs/${encodeURIComponent(source.id)}/accept`, { method: 'POST', maxIdentityInBody: true, body: JSON.stringify({ member: me, invitationToken: source.token }) });
     state.profile = me; state.memberToken = result.memberToken; updatePair(result.pair); incomingInvite = null;
     replaceAppUrl(location.pathname); go('connected');
   } catch (error) { toast(error.message); }

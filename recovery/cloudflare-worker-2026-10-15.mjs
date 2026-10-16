@@ -99,20 +99,33 @@ function maxInitDataFromHeader(value) {
   }
 }
 __name(maxInitDataFromHeader, "maxInitDataFromHeader");
+const parsedBodies = new WeakMap();
+async function bodyOf(request) {
+  if (parsedBodies.has(request)) return parsedBodies.get(request);
+  const parsed = (async () => {
+    if (Number(request.headers.get("content-length") || 0) > 32768) throw new Error("Request is too large");
+    const raw = await request.text();
+    if (raw.length > 32768) throw new Error("Request is too large");
+    return raw ? JSON.parse(raw) : {};
+  })();
+  parsedBodies.set(request, parsed);
+  return parsed;
+}
 async function maxIdentityFromRequest(request, env) {
-  const initData = maxInitDataFromHeader(request.headers.get("X-MAX-Init-Data"));
+  let initData = maxInitDataFromHeader(request.headers.get("X-MAX-Init-Data"));
+  // Some MAX webviews reject custom request headers before the request is
+  // sent. A signed init payload in a POST body is equally verified below and
+  // avoids making invitation creation a one-shot dead end for the user.
+  if (!initData && request.method !== "GET" && request.method !== "HEAD") {
+    const input = await bodyOf(request);
+    initData = maxInitDataFromHeader(input?._maxInitData);
+  }
   if (!initData) return null;
   const identity = await verifyMaxInitData(initData, env.MAX_BOT_TOKEN);
   if (!identity) throw new Error("MAX authentication failed");
   return identity;
 }
 __name(maxIdentityFromRequest, "maxIdentityFromRequest");
-async function bodyOf(request) {
-  if (Number(request.headers.get("content-length") || 0) > 32768) throw new Error("Request is too large");
-  const raw = await request.text();
-  if (raw.length > 32768) throw new Error("Request is too large");
-  return raw ? JSON.parse(raw) : {};
-}
 __name(bodyOf, "bodyOf");
 async function pairById(db, id) {
   return db.prepare("SELECT * FROM pairs WHERE id = ?").bind(id).first();
