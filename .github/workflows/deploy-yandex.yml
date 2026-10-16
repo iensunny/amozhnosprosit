@@ -23,11 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify GitHub OIDC identity
-        run: |
-          token="$(curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL")"
-          TOKEN="$token" node -e 'const [, payload] = process.env.TOKEN.split("."); const claims = JSON.parse(Buffer.from(payload, "base64url")); console.log(JSON.stringify({ iss: claims.iss, aud: claims.aud, sub: claims.sub }));'
-
       - name: Authorize Docker in Yandex Container Registry
         uses: yc-actions/yc-cr-login@v3
         with:
