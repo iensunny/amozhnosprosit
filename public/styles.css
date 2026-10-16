@@ -340,15 +340,15 @@ html.max-mobile .screen {
 .about-scroll p { margin: 0 0 14px; }
 .about-characters { position: absolute; z-index: 2; top: 452px; left: 18px; width: calc(100% - 36px); height: 172px; object-fit: contain; object-position: center bottom; pointer-events: none; }
 
-/* A desktop browser is not a phone viewport: present the mobile-first app as
-   a deliberate, readable app canvas instead of a narrow strip on a blank page. */
+/* Desktop keeps the illustrated vertical composition and scales it to the
+   available browser height without distorting its proportions. */
 @media (min-width: 700px) {
   html, body { height: 100%; overflow: hidden; }
   body {
     display: grid;
     min-height: 100vh;
     place-items: center;
-    padding: 28px;
+    padding: 14px 16px;
     background: radial-gradient(circle at 50% 20%, #fbf8f3 0, #ebe4da 72%);
   }
   .phone {
@@ -359,11 +359,37 @@ html.max-mobile .screen {
     overflow: hidden;
     border-radius: 32px;
     box-shadow: 0 22px 60px rgba(22, 47, 68, .18), 0 2px 8px rgba(22, 47, 68, .10);
-    transform: scale(1.2);
+    transform: scale(var(--desktop-app-scale, 1));
     transform-origin: center;
   }
 }
-@media (min-width: 700px) and (max-height: 820px) {
-  .phone { transform: scale(1); }
+
+/* MAX's desktop browser can briefly retain the max-mobile class after it has
+   expanded to a wide window.  The CSS breakpoint is authoritative here. */
+@media (min-width: 701px) {
+  html.max-mobile, html.max-mobile body { width: auto; height: 100%; overflow: hidden; }
+  html.max-mobile body {
+    display: grid;
+    min-height: 100vh;
+    place-items: center;
+    padding: 14px 16px;
+    background: radial-gradient(circle at 50% 20%, #fbf8f3 0, #ebe4da 72%);
+  }
+  html.max-mobile .phone {
+    width: 375px;
+    max-width: none;
+    height: 667px;
+    min-height: 667px;
+    margin: 0;
+    overflow: hidden;
+    border-radius: 32px;
+    box-shadow: 0 22px 60px rgba(22, 47, 68, .18), 0 2px 8px rgba(22, 47, 68, .10);
+    transform: scale(1.06);
+    transform-origin: center;
+  }
+  html.max-mobile .screen { min-height: 667px; height: 667px; }
 }
+@media (min-width: 701px) and (min-height: 900px) { html.max-mobile .phone { transform: scale(1.3); } }
+@media (min-width: 701px) and (min-height: 1100px) { html.max-mobile .phone { transform: scale(1.58); } }
+@media (min-width: 701px) and (min-height: 1400px) { html.max-mobile .phone { transform: scale(2.02); } }
 

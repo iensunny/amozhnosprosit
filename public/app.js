@@ -1,6 +1,9 @@
 const BASE_STORE = 'delis-prototype-v1';
 const SPLASH_DURATION = 2000;
 const inviteToken = new URLSearchParams(location.search).get('invite');
+const LOCAL_PREVIEW = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(location.hostname);
+const LOCAL_PREVIEW_PAIRS = 'amozhno-local-preview-pairs-v1';
+const resetLocalPreview = LOCAL_PREVIEW && new URLSearchParams(location.search).has('reset-preview');
 let STORE = BASE_STORE;
 try {
   if (inviteToken) {
@@ -10,6 +13,13 @@ try {
     sessionStorage.setItem('delis-active-store', STORE);
   } else STORE = sessionStorage.getItem('delis-active-store') || BASE_STORE;
 } catch { /* Private browsing can restrict session storage. */ }
+if (resetLocalPreview) {
+  try {
+    localStorage.removeItem(BASE_STORE);
+    localStorage.removeItem(LOCAL_PREVIEW_PAIRS);
+    sessionStorage.removeItem('delis-active-store');
+  } catch { /* Keep the preview usable when browser storage is unavailable. */ }
+}
 const $ = (selector) => document.querySelector(selector);
 
 function syncHostViewport() {
@@ -36,10 +46,16 @@ function syncHostViewport() {
   };
   const cssViewport = normalizeViewport(cssWidth, cssHeight, 375, 667);
   const { width, height } = cssViewport;
-  const nativeMobile = Boolean(host && ['ios', 'android'].includes(host.platform));
-  const mobileLayout = nativeMobile || mobileAgent || width <= 700;
+  const nativeMobile = Boolean(host && ['ios', 'android'].includes(host.platform) && width <= 700);
+  // A desktop browser can expose a mobile-like user agent. Its actual CSS
+  // viewport is the reliable signal: wide windows must use the desktop frame.
+  const mobileLayout = nativeMobile || width <= 700 || (mobileAgent && width <= 700);
   document.documentElement.classList.toggle('max-mobile', mobileLayout);
-  if (!mobileLayout) return;
+  if (!mobileLayout) {
+    const desktopScale = Math.min((height - 28) / 667, (width - 32) / 375);
+    document.documentElement.style.setProperty('--desktop-app-scale', String(Math.max(1, desktopScale)));
+    return;
+  }
 
   const safeProbe = document.createElement('div');
   safeProbe.style.cssText = 'position:fixed;visibility:hidden;inset:auto;bottom:0;padding-bottom:env(safe-area-inset-bottom, 0px)';
@@ -76,6 +92,10 @@ function syncHostViewport() {
 
 try { syncHostViewport(); } catch { document.documentElement.classList.remove('max-mobile'); }
 window.addEventListener('resize', syncHostViewport);
+window.addEventListener('load', syncHostViewport);
+// The desktop in-app browser first exposes a narrow bootstrap viewport and
+// expands it after deferred scripts load, without emitting resize.
+window.setTimeout(syncHostViewport, 250);
 function maxInitData() {
   const value = window.WebApp?.initData;
   return typeof value === 'string' && value.length > 0 ? value : '';
@@ -307,7 +327,79 @@ function render() {
 function b64url(value) { return btoa(unescape(encodeURIComponent(JSON.stringify(value)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 function validInvite(value) { return value && /^[a-zA-Z0-9-]{8,100}$/.test(value.id) && /^[A-Za-z0-9_-]{20,100}$/.test(value.token); }
 function inviteUrl(item) { const payload = { id: item.id, token: state.invitationToken }; return `${location.origin}${location.pathname}?invite=${b64url(payload)}`; }
+
+function previewPairs() {
+  try { return JSON.parse(localStorage.getItem(LOCAL_PREVIEW_PAIRS) || '{}'); }
+  catch { return {}; }
+}
+function savePreviewPairs(pairs) { localStorage.setItem(LOCAL_PREVIEW_PAIRS, JSON.stringify(pairs)); }
+function previewPair(id) {
+  const pair = previewPairs()[id];
+  if (!pair) throw new Error('Приглашение не найдено');
+  return pair;
+}
+function previewSavePair(pair) {
+  const pairs = previewPairs(); pairs[pair.id] = pair; savePreviewPairs(pairs); return pair;
+}
+function previewId() { return crypto.randomUUID?.() || `preview-${Date.now()}`; }
+async function previewRequest(path, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const body = options.body ? JSON.parse(options.body) : {};
+  if (path === '/api/max/restore') return { linked: false };
+  if (path === '/api/pairs' && method === 'POST') {
+    const pair = {
+      id: body.id || previewId(), status: 'pending', timeZone: body.timeZone,
+      startedAt: new Date().toISOString(), members: [body.member], questionDays: {}, marks: {}, notes: {}, planVersion: 2,
+      invitationToken: `preview_${previewId().replace(/-/g, '')}`
+    };
+    previewSavePair(pair);
+    return { pair, memberToken: `preview-member-${body.member.id}`, invitationToken: pair.invitationToken };
+  }
+  const match = path.match(/^\/api\/pairs\/([^/]+)(?:\/(.*))?$/);
+  if (!match) throw new Error('Локальный предпросмотр не поддерживает этот запрос');
+  const id = decodeURIComponent(match[1]), actionPath = match[2] || '', pair = previewPair(id);
+  if (!actionPath && method === 'GET') return pair;
+  if (actionPath === 'invite' && method === 'POST') {
+    pair.invitationToken ||= `preview_${previewId().replace(/-/g, '')}`;
+    previewSavePair(pair); return { invitationToken: pair.invitationToken, pair };
+  }
+  if (actionPath === 'invite-role' && method === 'GET') return { role: 'child' };
+  if (actionPath === 'accept' && method === 'POST') {
+    if (body.invitationToken !== pair.invitationToken) throw new Error('Ссылка приглашения недействительна');
+    if (pair.members.length < 2) pair.members.push(body.member);
+    pair.status = 'active'; pair.startedAt = new Date().toISOString();
+    previewSavePair(pair); return { pair, memberToken: `preview-member-${body.member.id}` };
+  }
+  if (actionPath === 'question' && method === 'POST') {
+    const day = dayCount(pair.startedAt, pair.timeZone);
+    pair.questionDays ||= {}; pair.questionDays[day] ||= {};
+    if (body.choice === 'skip') pair.questionDays[day].skippedAt = new Date().toISOString();
+    if (body.choice === 'replace') pair.questionDays[day].replaced = true;
+    if (body.choice === 'open') pair.questionDays[day].openedAt = new Date().toISOString();
+    previewSavePair(pair); return pair;
+  }
+  if (actionPath === 'marks' && method === 'POST') {
+    const key = `${pair.id}:${body.day}`; pair.marks ||= {}; pair.marks[key] = { markedAt: new Date().toISOString() };
+    previewSavePair(pair); return pair;
+  }
+  if (actionPath === 'notes' && method === 'GET') return { notes: pair.notes || {} };
+  const note = actionPath.match(/^notes\/(\d+)$/);
+  if (note && method === 'PUT') {
+    pair.notes ||= {}; pair.notes[note[1]] = { text: String(body.text || ''), updatedAt: new Date().toISOString() };
+    previewSavePair(pair); return { note: pair.notes[note[1]] };
+  }
+  const member = actionPath.match(/^members\/([^/]+)$/);
+  if (member && method === 'PATCH') {
+    pair.members = pair.members.map((item) => item.id === decodeURIComponent(member[1]) ? { ...item, name: body.name } : item);
+    previewSavePair(pair); return pair;
+  }
+  if (member && method === 'DELETE') {
+    const pairs = previewPairs(); delete pairs[id]; savePreviewPairs(pairs); return { deleted: true };
+  }
+  throw new Error('Локальный предпросмотр не поддерживает этот запрос');
+}
 async function request(path, options = {}) {
+  if (LOCAL_PREVIEW) return previewRequest(path, options);
   const initData = maxInitData();
   const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...(state.memberToken ? { Authorization: `Bearer ${state.memberToken}` } : {}), ...(initData ? { 'X-MAX-Init-Data': initData } : {}), ...(options.headers || {}) } });
   const data = await response.json();
