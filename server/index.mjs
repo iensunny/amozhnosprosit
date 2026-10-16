@@ -31,7 +31,9 @@ async function staticFetch(request) {
   return new Response(Readable.toWeb(createReadStream(file)), {
     headers: {
       "Content-Type": mime[extname(file)] ?? "application/octet-stream",
-      "Cache-Control": "public, max-age=3600"
+      // The HTML selects the versioned JS/CSS files. It must stay fresh so
+      // MAX opens the current app after a deploy; assets can remain cached.
+      "Cache-Control": requested === "/index.html" ? "no-cache" : "public, max-age=3600"
     }
   });
 }
