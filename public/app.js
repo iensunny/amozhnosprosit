@@ -166,6 +166,11 @@ function toast(message) {
   flashTimer = setTimeout(() => { flashMessage = ''; render(); }, 5000);
   render();
 }
+function replaceAppUrl(url) {
+  // MAX can reject History API calls in its embedded browser. URL cleanup is
+  // cosmetic, so it must never stop an onboarding or invitation transition.
+  try { history.replaceState({}, '', url); } catch {}
+}
 function go(next) {
   const pair = circle();
   if (['home', 'days', 'diary', 'after-mark'].includes(next) && pair?.status !== 'active') next = pair ? 'waiting' : 'invite-how';
@@ -175,7 +180,7 @@ function go(next) {
     else if (prompt && pair?.marks?.[prompt.key]) next = 'after-mark';
   }
   screen = next;
-  history.replaceState({}, '', location.pathname + location.search);
+  replaceAppUrl(location.pathname + location.search);
   render();
 }
 function circle() { return state.circles.find((item) => item.id === state.activeCircleId) || state.circles[0] || null; }
@@ -483,7 +488,7 @@ async function acceptInvite(name, role) {
   try {
     const result = await request(`/api/pairs/${encodeURIComponent(source.id)}/accept`, { method: 'POST', body: JSON.stringify({ member: me, invitationToken: source.token }) });
     state.profile = me; state.memberToken = result.memberToken; updatePair(result.pair); incomingInvite = null;
-    history.replaceState({}, '', location.pathname); go('connected');
+    replaceAppUrl(location.pathname); go('connected');
   } catch (error) { toast(error.message); }
 }
 async function loadPrivateNotes() {
