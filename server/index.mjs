@@ -21,7 +21,12 @@ const mime = {
 
 async function staticFetch(request) {
   const url = new URL(request.url);
-  const requested = url.pathname === "/" ? "/index.html" : url.pathname;
+  let requested;
+  try {
+    requested = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
+  } catch {
+    return new Response("Bad request", { status: 400 });
+  }
   const file = normalize(join(root, requested));
   if (!file.startsWith(root + "/") || !existsSync(file) || (await stat(file)).isDirectory()) {
     return new Response("Not found", { status: 404 });
