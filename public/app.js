@@ -115,6 +115,8 @@ function maxInitDataHeader() {
 let state = { profile: null, circles: [], activeCircleId: null, diary: [], marks: {}, privateNotes: {}, introAccepted: false, rulesSeen: false, memberToken: null, invitationToken: null };
 let screen = 'splash';
 let incomingInvite = null;
+let inviteStartupError = false;
+let startupRun = 0;
 let questions = { child: [], adult: [] };
 let questionsReady = false;
 let lastShownDay = '';
@@ -284,6 +286,7 @@ function shell(inner) { return `<section class="screen">${inner}${flashMessage ?
 function draw() {
   const pair = circle();
   if (screen === 'splash') return shell(`<img class="splash-partner-logo" src="assets/delis-ui-decorations/fond-zashchity-detey-yugra-trimmed.png" alt="Фонд защиты детей Югры"/><div class="splash-brand">${logo()}</div><img class="splash-ground" src="assets/delis-ui-decorations/figma-splash-hill.png" alt=""/><img class="splash-sprig" src="assets/delis-ui-decorations/figma-splash-branch.png" alt=""/><img class="splash-sprout" src="assets/delis-ui-decorations/figma-splash-sprout.png" alt=""/>`);
+  if (screen === 'invite-checking') return shell(`${logo()}<main class="onboarding-content"><h1>${inviteStartupError ? 'Не удалось проверить приглашение' : 'Открываем приглашение'}</h1><p>${inviteStartupError ? 'Проверьте подключение к интернету и попробуйте ещё раз.' : 'Подождите немного — готовим экран для присоединения.'}</p><button class="button button-primary onboarding-button" data-action="retry-start">${inviteStartupError ? 'Повторить' : 'Проверить ещё раз'}</button></main>`);
   if (screen === 'onboarding') return shell(`${logo('figma-onboarding-wordmark.png')}<main class="onboarding-content onboarding-purpose"><h1>Ближе — через разговор</h1><p class="onboarding-first">«А можно спросить?» помогает родителям и подросткам узнавать друг друга с новой стороны. Один вопрос в день — повод поговорить о том, на что обычно не хватает времени или слов.</p><p class="onboarding-second">Здесь можно делиться мыслями и историями без правильных ответов и оценок. Приложение не хранит ваши ответы — разговор остаётся между вами.</p><label class="onboarding-ack"><input id="intro-ack" type="checkbox"><span>Я понял(а)</span></label><button class="button button-primary onboarding-button" data-action="accept-intro">Продолжить</button></main>`);
   if (screen === 'how-it-works') return shell(`${logo()}<main class="onboarding-content onboarding-rules"><h1>Как это работает</h1><div class="rules-copy"><p>Создайте приглашение и дождитесь, когда близкий человек присоединится. Пока приглашение не принято, перейти к вопросам нельзя.</p><p>Каждый день вопрос получает один участник — тот, кому нужно задать его близкому. Сегодня вопрос для ребенка получает взрослый, завтра — наоборот.</p><p>Вопрос можно отправить карточкой и обсудить в удобное время. После разговора можно отметить его и перейти в раздел «Наши вопросы». Там будут собраны вопросы обоих участников из их дневников.</p><p>Можно не отвечать или пропустить вопрос. Ответы приложение не сохраняет.</p></div><button class="button button-primary onboarding-button" data-action="finish-rules">Продолжить</button></main>`);
   if (screen === 'name') return shell(`${logo()}<form id="name-form" class="setup-content"><article class="paper-card name-card"><p class="card-question">Как к тебе<br>обращаться?</p><input class="text-field" id="profile-name" name="name" value="${esc(state.profile?.name || '')}" maxlength="40" autocomplete="given-name" aria-label="Как к тебе обращаться" /><img class="name-brush" src="design_assets/delish-elements/04-terracotta-swish.png" alt=""/></article>${tip('Имя можно изменить позже', 'Будем обращаться к тебе именно так.')}<button class="button button-primary bottom-action" type="submit">Продолжить</button></form>`);
@@ -432,7 +435,7 @@ async function request(path, options = {}) {
   // it carries our custom identity header. For the first, unauthenticated
   // requests we send the same signed payload inside the HTTPS JSON body; the
   // server verifies it exactly as it verifies the header value.
-  const { maxIdentityInBody = false, ...fetchOptions } = options;
+  const { maxIdentityInBody = false, timeoutMs = 15000, ...fetchOptions } = options;
   const initData = maxInitDataHeader();
   let body = fetchOptions.body;
   if (maxIdentityInBody && initData) {
@@ -440,15 +443,31 @@ async function request(path, options = {}) {
     try { payload = body ? JSON.parse(body) : {}; } catch { /* validated by the server below */ }
     body = JSON.stringify({ ...payload, _maxInitData: initData });
   }
-  const response = await fetch(path, { ...fetchOptions, body, headers: { 'Content-Type': 'application/json', ...(state.memberToken ? { Authorization: `Bearer ${state.memberToken}` } : {}), ...(!maxIdentityInBody && initData ? { 'X-MAX-Init-Data': initData } : {}), ...(fetchOptions.headers || {}) } });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Не удалось выполнить действие');
-  return data;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(path, { ...fetchOptions, body, signal: controller.signal, headers: { 'Content-Type': 'application/json', ...(state.memberToken ? { Authorization: `Bearer ${state.memberToken}` } : {}), ...(!maxIdentityInBody && initData ? { 'X-MAX-Init-Data': initData } : {}), ...(fetchOptions.headers || {}) } });
+    const data = await response.json();
+    if (!response.ok) {
+      const detail = data.diagnosticError;
+      const diagnostic = detail && typeof detail.type === 'string'
+        ? ` · ${detail.type}${Number.isInteger(detail.code) ? ` (${detail.code})` : ''}`
+        : '';
+      const reference = typeof data.diagnosticId === 'string' ? ` · ref ${data.diagnosticId}` : '';
+      throw new Error(`${data.error || 'Не удалось выполнить действие'}${diagnostic}${reference}`);
+    }
+    return data;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 async function restoreMaxMember() {
   if (!maxInitData()) return false;
   try {
-    const result = await request('/api/max/restore', { method: 'POST', maxIdentityInBody: true });
+    // A slow MAX restore must not leave both participants on the splash screen.
+    // Their accepted pair is already saved locally; restore is a convenience
+    // for recovering that state on a new device, not a prerequisite to opening.
+    const result = await request('/api/max/restore', { method: 'POST', maxIdentityInBody: true, timeoutMs: 4000 });
     if (!result.linked) return false;
     state.profile = result.member;
     state.memberToken = result.memberToken;
@@ -484,7 +503,7 @@ async function createCircle() {
     const result = await request('/api/pairs', { method: 'POST', maxIdentityInBody: true, body: JSON.stringify({ id, member: state.profile, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
     state.memberToken = result.memberToken; state.invitationToken = result.invitationToken; updatePair(result.pair);
     go('invite-ready');
-  } catch (error) { toast('Не удалось создать приглашение. Нажмите «Понятно» ещё раз.'); }
+  } catch (error) { toast(error.message || 'Не удалось создать приглашение. Нажмите «Понятно» ещё раз.'); }
   finally { creatingCircle = false; }
 }
 function parseInvite() {
@@ -552,6 +571,7 @@ async function shareQuestionCard() {
 
 async function action(button) {
   const type = button.dataset.action, pair = circle();
+  if (type === 'retry-start') { void start(); return; }
   if (type === 'go') { go(button.dataset.screen); return; }
   if (type === 'accept-intro') { if (!$('#intro-ack')?.checked) return; state.introAccepted = true; save(); go('how-it-works'); return; }
   if (type === 'finish-rules') { state.rulesSeen = true; save(); go('name'); return; }
@@ -680,22 +700,48 @@ async function loadQuestions() {
   if (screen === 'home') go('home');
 }
 async function start() {
+  const run = ++startupRun;
+  const startedAt = Date.now();
+  let fallbackScreen = null;
   incomingInvite = parseInvite();
+  inviteStartupError = false;
   render();
-  await restoreMaxMember();
+  const splashTimeout = window.setTimeout(() => {
+    if (run !== startupRun || screen !== 'splash') return;
+    fallbackScreen = incomingInvite && !circle() ? 'invite-checking' : startupScreen();
+    go(fallbackScreen);
+  }, SPLASH_DURATION);
+  const restore = restoreMaxMember();
+  let inviteRole = null;
   if (incomingInvite && !circle()) {
+    inviteRole = request(`/api/pairs/${encodeURIComponent(incomingInvite.id)}/invite-role`, { timeoutMs: 4000 });
+  }
+  await restore;
+  if (inviteRole) {
     try {
-      const invite = await request(`/api/pairs/${encodeURIComponent(incomingInvite.id)}/invite-role`);
+      const invite = await inviteRole;
       state.profile ||= { id: `member-${Date.now()}`, name: '', role: '' };
       state.profile.role = invite.role;
       save();
-    } catch { incomingInvite = null; }
+    } catch { inviteStartupError = true; }
   }
-  const next = !state.introAccepted ? 'onboarding' : !state.rulesSeen ? 'how-it-works'
+  if (run !== startupRun) return;
+  const next = startupScreen();
+  if (screen === 'splash') {
+    window.clearTimeout(splashTimeout);
+    window.setTimeout(() => { if (run === startupRun) go(next); }, Math.max(0, SPLASH_DURATION - (Date.now() - startedAt)));
+  } else if (screen === 'invite-checking') {
+    if (inviteStartupError) render();
+    else go(next);
+  } else if (fallbackScreen && screen === fallbackScreen && !inviteStartupError) {
+    go(next);
+  }
+}
+function startupScreen() {
+  return !state.introAccepted ? 'onboarding' : !state.rulesSeen ? 'how-it-works'
     : !state.profile?.name ? 'name' : !state.profile.role ? 'role'
       : incomingInvite && !circle() ? 'role'
         : !circle() ? 'invite-how' : circle().status === 'pending' ? 'waiting' : 'home';
-  setTimeout(() => go(next), SPLASH_DURATION);
 }
 loadQuestions();
 start();

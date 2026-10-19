@@ -131,6 +131,42 @@ async function pairById(db, id) {
   return db.prepare("SELECT * FROM pairs WHERE id = ?").bind(id).first();
 }
 __name(pairById, "pairById");
+function safeDiagnosticMessage(error) {
+  return String(error?.message || "Unknown error")
+    .replace(/\s+/g, " ")
+    .replace(/[A-Za-z0-9_-]{32,}/g, "[redacted]")
+    .replace(/\b\d{8,}\b/g, "[redacted]")
+    .slice(0, 240);
+}
+__name(safeDiagnosticMessage, "safeDiagnosticMessage");
+async function writeDiagnostic(db, event) {
+  try {
+    await db.prepare("INSERT INTO diagnostic_events (id, created_at, stage, error_type, error_code, message) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(event.id, event.createdAt, event.stage, event.errorType, event.errorCode, event.message)
+      .run();
+    return true;
+  } catch (error) {
+    console.error("Could not persist diagnostic event", {
+      diagnosticId: event.id,
+      stage: event.stage,
+      errorType: error?.name || "Error",
+      errorCode: Number.isInteger(error?.code) ? error.code : ""
+    });
+    return false;
+  }
+}
+__name(writeDiagnostic, "writeDiagnostic");
+function insertMember(db, member, pairId, position, tokenHash, maxUserId) {
+  if (maxUserId) {
+    return db.prepare("INSERT INTO members (id, pair_id, name, role, position, token_hash, max_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(member.id, pairId, member.name.trim(), member.role, position, tokenHash, maxUserId);
+  }
+  // Use a SQL NULL literal for an unlinked browser participant; MAX identity
+  // remains optional.
+  return db.prepare("INSERT INTO members (id, pair_id, name, role, position, token_hash, max_user_id) VALUES (?, ?, ?, ?, ?, ?, NULL)")
+    .bind(member.id, pairId, member.name.trim(), member.role, position, tokenHash);
+}
+__name(insertMember, "insertMember");
 async function publicPair(db, pair) {
   const [members, marks, questionDays] = await Promise.all([
     db.prepare("SELECT id, name, role, position FROM members WHERE pair_id = ? ORDER BY position").bind(pair.id).all(),
@@ -176,6 +212,7 @@ function dayNumber(pair) {
 __name(dayNumber, "dayNumber");
 async function api(request, env, pathname) {
   const db = env.DB;
+  let diagnosticStage = "route";
   try {
     if (pathname === "/api/health" && request.method === "GET") return json({ ok: true });
     if (pathname === "/api/max/restore" && request.method === "POST") {
@@ -190,44 +227,59 @@ async function api(request, env, pathname) {
       return json({ linked: true, member: { id: member.id, name: member.name, role: member.role }, memberToken, pair: await publicPair(db, pair2) });
     }
     if (pathname === "/api/pairs" && request.method === "POST") {
+      diagnosticStage = "create_read_request";
       const input = await bodyOf(request);
+      diagnosticStage = "create_validate_input";
       if (!validId(input.id) || !validMember(input.member)) return json({ error: "Invalid invitation" }, 400);
+      diagnosticStage = "create_verify_max_identity";
       const identity = await maxIdentityFromRequest(request, env);
+      diagnosticStage = "create_check_existing_member";
       if (identity && await db.prepare("SELECT id FROM members WHERE max_user_id = ?").bind(identity.userId).first())
         return json({ error: "\u042D\u0442\u043E\u0442 \u0430\u043A\u043A\u0430\u0443\u043D\u0442 MAX \u0443\u0436\u0435 \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0451\u043D \u043A \u0434\u0440\u0443\u0433\u043E\u0439 \u043F\u0430\u0440\u0435" }, 409);
       const timeZone = input.timeZone || "Europe/Moscow";
+      diagnosticStage = "create_validate_timezone";
       try {
         new Intl.DateTimeFormat("en-US", { timeZone }).format(/* @__PURE__ */ new Date());
       } catch {
         return json({ error: "Invalid time zone" }, 400);
       }
+      diagnosticStage = "create_check_existing_pair";
       if (await pairById(db, input.id)) return json({ error: "Invitation exists" }, 409);
       const memberToken = randomToken(), invitationToken = randomToken();
       const now = (/* @__PURE__ */ new Date()).toISOString(), expires = new Date(Date.now() + inviteLifetimeMs).toISOString();
+      diagnosticStage = "create_save_invitation";
       await db.batch([
         db.prepare("INSERT INTO pairs (id, status, created_at, started_at, time_zone, plan_version, invite_hash, invite_expires_at) VALUES (?, ?, ?, NULL, ?, 2, ?, ?)").bind(input.id, "pending", now, timeZone, await digest(invitationToken), expires),
-        db.prepare("INSERT INTO members (id, pair_id, name, role, position, token_hash, max_user_id) VALUES (?, ?, ?, ?, 0, ?, ?)").bind(input.member.id, input.id, input.member.name.trim(), input.member.role, await digest(memberToken), identity?.userId || null)
+        insertMember(db, input.member, input.id, 0, await digest(memberToken), identity?.userId)
       ]);
+      diagnosticStage = "create_load_invitation";
       return json({ pair: await publicPair(db, await pairById(db, input.id)), memberToken, invitationToken }, 201);
     }
     const parts = pathname.split("/").filter(Boolean);
     if (parts[0] !== "api" || parts[1] !== "pairs" || !validId(parts[2])) return json({ error: "Not found" }, 404);
+    if (parts.length === 4 && parts[3] === "accept" && request.method === "POST") diagnosticStage = "load_pair";
     const pair = await pairById(db, parts[2]);
     if (!pair) return json({ error: "Invitation not found" }, 404);
     if (parts.length === 4 && parts[3] === "accept" && request.method === "POST") {
+      diagnosticStage = "read_request";
       const { member, invitationToken } = await bodyOf(request);
+      diagnosticStage = "validate_invitation";
       if (!validMember(member) || typeof invitationToken !== "string" || !pair.invite_hash || await digest(invitationToken) !== pair.invite_hash || Date.now() > Date.parse(pair.invite_expires_at || 0))
         return json({ error: "Invitation is invalid or expired" }, 403);
+      diagnosticStage = "load_first_member";
       const existing = await db.prepare("SELECT role FROM members WHERE pair_id = ? AND position = 0").bind(pair.id).first();
       if (pair.status !== "pending" || !existing || existing.role === member.role) return json({ error: "Invitation cannot be accepted" }, 409);
+      diagnosticStage = "verify_max_identity";
       const identity = await maxIdentityFromRequest(request, env);
       if (identity && await db.prepare("SELECT id FROM members WHERE max_user_id = ?").bind(identity.userId).first())
         return json({ error: "\u042D\u0442\u043E\u0442 \u0430\u043A\u043A\u0430\u0443\u043D\u0442 MAX \u0443\u0436\u0435 \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0451\u043D \u043A \u0434\u0440\u0443\u0433\u043E\u0439 \u043F\u0430\u0440\u0435" }, 409);
       const memberToken = randomToken(), now = (/* @__PURE__ */ new Date()).toISOString();
+      diagnosticStage = "save_membership";
       await db.batch([
-        db.prepare("INSERT INTO members (id, pair_id, name, role, position, token_hash, max_user_id) VALUES (?, ?, ?, ?, 1, ?, ?)").bind(member.id, pair.id, member.name.trim(), member.role, await digest(memberToken), identity?.userId || null),
+        insertMember(db, member, pair.id, 1, await digest(memberToken), identity?.userId),
         db.prepare("UPDATE pairs SET status = 'active', started_at = ?, invite_hash = NULL, invite_expires_at = NULL WHERE id = ? AND status = 'pending'").bind(now, pair.id)
       ]);
+      diagnosticStage = "load_joined_pair";
       return json({ pair: await publicPair(db, await pairById(db, pair.id)), memberToken });
     }
     const actor = await memberFor(request, db, pair.id, env);
@@ -289,7 +341,41 @@ async function api(request, env, pathname) {
     }
     return json({ error: "Not found" }, 404);
   } catch (error) {
-    console.error("API request failed", error);
+    const rootCause = error?.cause ?? error;
+    const errorType = typeof rootCause?.name === "string" && /^[A-Za-z]+Error$/.test(rootCause.name)
+      ? rootCause.name
+      : "Error";
+    const errorCode = Number.isInteger(rootCause?.code) ? rootCause.code : null;
+    console.error("API request failed", {
+      stage: diagnosticStage,
+      type: errorType,
+      code: errorCode,
+      message: safeDiagnosticMessage(rootCause)
+    });
+    if (pathname.endsWith("/accept") || (pathname === "/api/pairs" && request.method === "POST")) {
+      const creatingInvite = pathname === "/api/pairs" && request.method === "POST";
+      const stages = creatingInvite
+        ? ["create_read_request", "create_validate_input", "create_verify_max_identity", "create_check_existing_member", "create_validate_timezone", "create_check_existing_pair", "create_save_invitation", "create_load_invitation"]
+        : ["load_pair", "read_request", "validate_invitation", "load_first_member", "verify_max_identity", "save_membership", "load_joined_pair"];
+      const stageCode = stages.indexOf(diagnosticStage) + 1;
+      const diagnosticId = crypto.randomUUID();
+      const diagnosticMessage = safeDiagnosticMessage(rootCause);
+      const diagnosticSaved = await writeDiagnostic(db, {
+        id: diagnosticId,
+        createdAt: new Date().toISOString(),
+        stage: diagnosticStage,
+        errorType,
+        errorCode: errorCode === null ? "" : String(errorCode),
+        message: diagnosticMessage
+      });
+      return json({
+        error: `Request failed [${creatingInvite ? "INVITE" : "JOIN"}-${String(stageCode).padStart(2, "0")}]`,
+        diagnostic: diagnosticStage,
+        diagnosticId,
+        diagnosticSaved,
+        diagnosticError: { type: errorType, code: errorCode }
+      }, 500);
+    }
     return json({ error: "Request failed" }, 500);
   }
 }

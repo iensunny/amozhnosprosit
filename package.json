@@ -7,13 +7,11 @@
   },
   "scripts": {
     "start": "node server/index.mjs",
-    "dev": "node --watch server/index.mjs"
+    "dev": "node --watch server/index.mjs",
+    "test": "node --test"
   },
   "dependencies": {
-    "@ydbjs/auth": "^6.3.1",
-    "@ydbjs/auth-yandex-cloud": "^0.2.0",
-    "@ydbjs/core": "^6.3.1",
-    "@ydbjs/query": "^6.3.0",
+    "mysql2": "^3.24.6",
     "node-cron": "^4.2.1",
     "postgres": "^3.4.7"
   }
