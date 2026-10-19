@@ -215,6 +215,7 @@ async function api(request, env, pathname) {
   let diagnosticStage = "route";
   try {
     if (pathname === "/api/health" && request.method === "GET") return json({ ok: true });
+    if (pathname === "/api/config" && request.method === "GET") return json({ maxBotName: env.MAX_BOT_NAME || "se14681938_bot" });
     if (pathname === "/api/max/restore" && request.method === "POST") {
       const identity = await maxIdentityFromRequest(request, env);
       if (!identity) return json({ linked: false });
@@ -232,7 +233,13 @@ async function api(request, env, pathname) {
       diagnosticStage = "create_validate_input";
       if (!validId(input.id) || !validMember(input.member)) return json({ error: "Invalid invitation" }, 400);
       diagnosticStage = "create_verify_max_identity";
-      const identity = await maxIdentityFromRequest(request, env);
+      let identity;
+      try {
+        identity = await maxIdentityFromRequest(request, env);
+      } catch {
+        return json({ error: "Откройте приложение в MAX и попробуйте ещё раз" }, 403);
+      }
+      if (!identity) return json({ error: "Создать приглашение можно только в MAX" }, 403);
       diagnosticStage = "create_check_existing_member";
       if (identity && await db.prepare("SELECT id FROM members WHERE max_user_id = ?").bind(identity.userId).first())
         return json({ error: "\u042D\u0442\u043E\u0442 \u0430\u043A\u043A\u0430\u0443\u043D\u0442 MAX \u0443\u0436\u0435 \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0451\u043D \u043A \u0434\u0440\u0443\u0433\u043E\u0439 \u043F\u0430\u0440\u0435" }, 409);
@@ -270,7 +277,13 @@ async function api(request, env, pathname) {
       const existing = await db.prepare("SELECT role FROM members WHERE pair_id = ? AND position = 0").bind(pair.id).first();
       if (pair.status !== "pending" || !existing || existing.role === member.role) return json({ error: "Invitation cannot be accepted" }, 409);
       diagnosticStage = "verify_max_identity";
-      const identity = await maxIdentityFromRequest(request, env);
+      let identity;
+      try {
+        identity = await maxIdentityFromRequest(request, env);
+      } catch {
+        return json({ error: "Откройте приглашение в MAX и попробуйте ещё раз" }, 403);
+      }
+      if (!identity) return json({ error: "Принять приглашение можно только в MAX" }, 403);
       if (identity && await db.prepare("SELECT id FROM members WHERE max_user_id = ?").bind(identity.userId).first())
         return json({ error: "\u042D\u0442\u043E\u0442 \u0430\u043A\u043A\u0430\u0443\u043D\u0442 MAX \u0443\u0436\u0435 \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0451\u043D \u043A \u0434\u0440\u0443\u0433\u043E\u0439 \u043F\u0430\u0440\u0435" }, 409);
       const memberToken = randomToken(), now = (/* @__PURE__ */ new Date()).toISOString();

@@ -1,7 +1,10 @@
 const BASE_STORE = 'delis-prototype-v1';
 const SPLASH_DURATION = 2000;
-const inviteToken = new URLSearchParams(location.search).get('invite');
+const queryParams = new URLSearchParams(location.search);
+const maxStartParam = window.WebApp?.initDataUnsafe?.start_param;
+const inviteToken = typeof maxStartParam === 'string' && maxStartParam ? maxStartParam : queryParams.get('invite');
 const LOCAL_PREVIEW = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(location.hostname);
+let maxBotName = 'se14681938_bot';
 const LOCAL_PREVIEW_PAIRS = 'amozhno-local-preview-pairs-v1';
 const resetLocalPreview = LOCAL_PREVIEW && new URLSearchParams(location.search).has('reset-preview');
 let STORE = BASE_STORE;
@@ -259,16 +262,16 @@ function logo(options = {}) {
 }
 function nav(active) {
   if (circle()?.status !== 'active' && active === 'settings') return '';
-  if (circle()?.status !== 'active' && active === 'about') return `<nav class="bottom-nav" aria-label="Навигация"><span></span><span></span><button class="nav-item" data-action="go" data-screen="settings" aria-label="Настройки"><img src="assets/delis-ui-decorations/figma-nav-settings-more.svg" alt=""/></button></nav>`;
+  if (circle()?.status !== 'active' && active === 'about') return `<nav class="bottom-nav" aria-label="Навигация"><span></span><span></span><button class="nav-item" data-action="go" data-screen="settings" aria-label="Настройки"><img src="assets/delis-ui-decorations/figma-nav-settings-more.svg?v=20261020-1" alt=""/></button></nav>`;
   const icons = active === 'home'
     ? ['figma-nav-home.svg', 'figma-nav-diary.svg', 'figma-nav-more.svg']
     : active === 'diary'
       ? ['figma-nav-days-home.svg', 'figma-nav-days-diary.svg', 'figma-nav-days-more.svg']
       : ['figma-nav-settings-home.svg', 'figma-nav-settings-diary.svg', 'figma-nav-settings-more.svg'];
   return `<nav class="bottom-nav" aria-label="Навигация">
-    <button class="nav-item" data-action="go" data-screen="home" aria-label="Главная"><img src="assets/delis-ui-decorations/${icons[0]}" alt=""/></button>
-    <button class="nav-item" data-action="go" data-screen="days" aria-label="Дневник"><img src="assets/delis-ui-decorations/${icons[1]}" alt=""/></button>
-    <button class="nav-item" data-action="go" data-screen="settings" aria-label="Ещё"><img src="assets/delis-ui-decorations/${icons[2]}" alt=""/></button>
+    <button class="nav-item" data-action="go" data-screen="home" aria-label="Главная"><img src="assets/delis-ui-decorations/${icons[0]}?v=20261020-1" alt=""/></button>
+    <button class="nav-item" data-action="go" data-screen="days" aria-label="Дневник"><img src="assets/delis-ui-decorations/${icons[1]}?v=20261020-1" alt=""/></button>
+    <button class="nav-item" data-action="go" data-screen="settings" aria-label="Ещё"><img src="assets/delis-ui-decorations/${icons[2]}?v=20261020-1" alt=""/></button>
   </nav>`;
 }
 function tip(title, text = '', sprout = 'figma-sprout.png') { return `<aside class="tip"><img src="assets/delis-ui-decorations/${sprout}" alt=""/><span class="tip-divider"></span><span class="tip-copy"><strong>${title}</strong>${text ? `<span>${text}</span>` : ''}</span></aside>`; }
@@ -286,6 +289,7 @@ function shell(inner) { return `<section class="screen">${inner}${flashMessage ?
 function draw() {
   const pair = circle();
   if (screen === 'splash') return shell(`<img class="splash-partner-logo" src="assets/delis-ui-decorations/fond-zashchity-detey-yugra-trimmed.png" alt="Фонд защиты детей Югры"/><div class="splash-brand">${logo()}</div><img class="splash-ground" src="assets/delis-ui-decorations/figma-splash-hill.png" alt=""/><img class="splash-sprig" src="assets/delis-ui-decorations/figma-splash-branch.png" alt=""/><img class="splash-sprout" src="assets/delis-ui-decorations/figma-splash-sprout.png" alt=""/>`);
+  if (screen === 'max-required') return shell(`${logo()}<main class="onboarding-content"><h1>Откройте приложение в MAX</h1><p>${incomingInvite ? 'Приглашение можно принять только внутри MAX. Откройте его там, чтобы присоединиться к близкому человеку.' : 'Создать пару и пользоваться приложением можно только в MAX — так участники будут привязаны к своим аккаунтам.'}</p><button class="button button-primary onboarding-button" data-action="open-max">Открыть в MAX</button></main>`);
   if (screen === 'invite-checking') return shell(`${logo()}<main class="onboarding-content"><h1>${inviteStartupError ? 'Не удалось проверить приглашение' : 'Открываем приглашение'}</h1><p>${inviteStartupError ? 'Проверьте подключение к интернету и попробуйте ещё раз.' : 'Подождите немного — готовим экран для присоединения.'}</p><button class="button button-primary onboarding-button" data-action="retry-start">${inviteStartupError ? 'Повторить' : 'Проверить ещё раз'}</button></main>`);
   if (screen === 'onboarding') return shell(`${logo('figma-onboarding-wordmark.png')}<main class="onboarding-content onboarding-purpose"><h1>Ближе — через разговор</h1><p class="onboarding-first">«А можно спросить?» помогает родителям и подросткам узнавать друг друга с новой стороны. Один вопрос в день — повод поговорить о том, на что обычно не хватает времени или слов.</p><p class="onboarding-second">Здесь можно делиться мыслями и историями без правильных ответов и оценок. Приложение не хранит ваши ответы — разговор остаётся между вами.</p><label class="onboarding-ack"><input id="intro-ack" type="checkbox"><span>Я понял(а)</span></label><button class="button button-primary onboarding-button" data-action="accept-intro">Продолжить</button></main>`);
   if (screen === 'how-it-works') return shell(`${logo()}<main class="onboarding-content onboarding-rules"><h1>Как это работает</h1><div class="rules-copy"><p>Создайте приглашение и дождитесь, когда близкий человек присоединится. Пока приглашение не принято, перейти к вопросам нельзя.</p><p>Каждый день вопрос получает один участник — тот, кому нужно задать его близкому. Сегодня вопрос для ребенка получает взрослый, завтра — наоборот.</p><p>Вопрос можно отправить карточкой и обсудить в удобное время. После разговора можно отметить его и перейти в раздел «Наши вопросы». Там будут собраны вопросы обоих участников из их дневников.</p><p>Можно не отвечать или пропустить вопрос. Ответы приложение не сохраняет.</p></div><button class="button button-primary onboarding-button" data-action="finish-rules">Продолжить</button></main>`);
@@ -357,7 +361,11 @@ function render() {
 
 function b64url(value) { return btoa(unescape(encodeURIComponent(JSON.stringify(value)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 function validInvite(value) { return value && /^[a-zA-Z0-9-]{8,100}$/.test(value.id) && /^[A-Za-z0-9_-]{20,100}$/.test(value.token); }
-function inviteUrl(item) { const payload = { id: item.id, token: state.invitationToken }; return `${location.origin}${location.pathname}?invite=${b64url(payload)}`; }
+function maxAppUrl(startParam = '') { const base = `https://max.ru/${encodeURIComponent(maxBotName)}`; return startParam ? `${base}?startapp=${encodeURIComponent(startParam)}` : `${base}?startapp`; }
+function inviteUrl(item) {
+  const payload = b64url({ id: item.id, token: state.invitationToken });
+  return LOCAL_PREVIEW ? `${location.origin}${location.pathname}?invite=${payload}` : maxAppUrl(payload);
+}
 
 function previewPairs() {
   try { return JSON.parse(localStorage.getItem(LOCAL_PREVIEW_PAIRS) || '{}'); }
@@ -376,6 +384,7 @@ function previewId() { return crypto.randomUUID?.() || `preview-${Date.now()}`; 
 async function previewRequest(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
   const body = options.body ? JSON.parse(options.body) : {};
+  if (path === '/api/config' && method === 'GET') return { maxBotName };
   if (path === '/api/max/restore') return { linked: false };
   if (path === '/api/pairs' && method === 'POST') {
     const pair = {
@@ -507,7 +516,7 @@ async function createCircle() {
   finally { creatingCircle = false; }
 }
 function parseInvite() {
-  const value = new URLSearchParams(location.search).get('invite');
+  const value = typeof maxStartParam === 'string' && maxStartParam ? maxStartParam : new URLSearchParams(location.search).get('invite');
   if (!value) return null;
   try {
     const restored = value.replace(/-/g, '+').replace(/_/g, '/');
@@ -548,13 +557,31 @@ async function share(url) {
 async function shareQuestionCard() {
   const questionCard = $('.home-content .paper-card');
   if (!questionCard || !window.html2canvas) { toast('Не удалось подготовить карточку'); return; }
+  let sandbox;
   try {
     await document.fonts?.ready;
-    const canvas = await window.html2canvas(questionCard, {
+    const exportCard = questionCard.cloneNode(true);
+    const width = questionCard.offsetWidth, height = questionCard.offsetHeight;
+    sandbox = document.createElement('div');
+    Object.assign(sandbox.style, {
+      position: 'fixed', left: '-10000px', top: '0', width: `${width}px`, height: `${height}px`,
+      overflow: 'hidden', pointerEvents: 'none', zIndex: '-1'
+    });
+    Object.assign(exportCard.style, {
+      position: 'relative', top: '0', left: '0', width: `${width}px`, height: `${height}px`,
+      margin: '0', transform: 'none'
+    });
+    sandbox.append(exportCard);
+    document.body.append(sandbox);
+    await Promise.all([...exportCard.querySelectorAll('img')].map((image) =>
+      typeof image.decode === 'function' ? image.decode().catch(() => {}) : Promise.resolve()));
+    const canvas = await window.html2canvas(exportCard, {
       backgroundColor: null,
       scale: 3,
       useCORS: true,
       logging: false,
+      width,
+      height,
     });
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
     if (!blob) throw new Error('empty image');
@@ -566,11 +593,18 @@ async function shareQuestionCard() {
     link.href = url; link.download = file.name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   } catch {
     toast('Не удалось подготовить карточку');
+  } finally {
+    sandbox?.remove();
   }
 }
 
 async function action(button) {
   const type = button.dataset.action, pair = circle();
+  if (type === 'open-max') {
+    const startParam = incomingInvite ? b64url(incomingInvite) : (typeof maxStartParam === 'string' ? maxStartParam : '');
+    location.href = maxAppUrl(startParam);
+    return;
+  }
   if (type === 'retry-start') { void start(); return; }
   if (type === 'go') { go(button.dataset.screen); return; }
   if (type === 'accept-intro') { if (!$('#intro-ack')?.checked) return; state.introAccepted = true; save(); go('how-it-works'); return; }
@@ -708,10 +742,15 @@ async function start() {
   render();
   const splashTimeout = window.setTimeout(() => {
     if (run !== startupRun || screen !== 'splash') return;
-    fallbackScreen = incomingInvite && !circle() ? 'invite-checking' : startupScreen();
+    fallbackScreen = !LOCAL_PREVIEW && !maxInitData() ? 'max-required' : incomingInvite && !circle() ? 'invite-checking' : startupScreen();
     go(fallbackScreen);
   }, SPLASH_DURATION);
   const restore = restoreMaxMember();
+  const config = request('/api/config', { timeoutMs: 4000 });
+  try {
+    const publicConfig = await config;
+    if (typeof publicConfig.maxBotName === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(publicConfig.maxBotName)) maxBotName = publicConfig.maxBotName;
+  } catch { /* The documented public bot name remains a safe fallback. */ }
   let inviteRole = null;
   if (incomingInvite && !circle()) {
     inviteRole = request(`/api/pairs/${encodeURIComponent(incomingInvite.id)}/invite-role`, { timeoutMs: 4000 });
@@ -738,6 +777,7 @@ async function start() {
   }
 }
 function startupScreen() {
+  if (!LOCAL_PREVIEW && !maxInitData()) return 'max-required';
   return !state.introAccepted ? 'onboarding' : !state.rulesSeen ? 'how-it-works'
     : !state.profile?.name ? 'name' : !state.profile.role ? 'role'
       : incomingInvite && !circle() ? 'role'
