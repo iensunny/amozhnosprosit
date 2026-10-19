@@ -9,6 +9,7 @@ const lockFile = "/var/www/www-root/data/.amozhnosprosit-deploy-lock";
 const nodeBin = "/usr/lib/ispnodejs/bin/node";
 const npmBin = "/usr/lib/ispnodejs/bin/npm";
 const pm2Bin = "/usr/lib/ispnodejs/lib/node_modules/pm2/bin/pm2";
+const appPort = 10000;
 
 if (!existsSync(triggerFile)) process.exit(0);
 
@@ -56,7 +57,7 @@ try {
   let healthy = false;
   for (let attempt = 0; attempt < 20; attempt += 1) {
     try {
-      const response = await fetch("http://127.0.0.1:8080/api/health", { signal: AbortSignal.timeout(2_000) });
+      const response = await fetch("http://127.0.0.1:${appPort}/api/health", { signal: AbortSignal.timeout(2_000) });
       if (response.ok) {
         const body = await response.json();
         if (body?.ok === true) {
