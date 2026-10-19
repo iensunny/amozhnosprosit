@@ -1,0 +1,70 @@
+name: Deploy to REG.RU
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-regru-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the release
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install and test
+        run: |
+          npm ci
+          npm test
+
+      - name: Upload application over explicit FTPS
+        uses: SamKirkland/FTP-Deploy-Action@v4.4.0
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          port: 21
+          security: strict
+          local-dir: ./
+          server-dir: ./
+          exclude: |
+            **/.git*/**
+            **/.github/**
+            **/node_modules/**
+            **/.env*
+            **/.DS_Store
+            **/recovery/**
+            **/function/**
+            **/.function-build/**
+            **/*.zip
+            **/*.tgz
+            **/*.tar.gz
+            **/README 2.md
+            /.ftp-deploy-sync-state.json
+            /.deploy-trigger
+
+      - name: Request application restart
+        env:
+          FTP_HOST: ${{ secrets.FTP_SERVER }}
+          FTP_USER: ${{ secrets.FTP_USERNAME }}
+          FTP_PASS: ${{ secrets.FTP_PASSWORD }}
+        run: |
+          printf '%s\n' "$GITHUB_SHA" > .deploy-trigger
+          curl --fail --silent --show-error --ssl-reqd \
+            --user "$FTP_USER:$FTP_PASS" \
+            --upload-file .deploy-trigger \
+            "ftp://$FTP_HOST/.deploy-trigger"
