@@ -47,7 +47,7 @@ jobs:
             **/node_modules/**
             **/.env*
             **/.DS_Store
-            **/recovery/**
+            **/*.test.mjs
             **/function/**
             **/.function-build/**
             **/*.zip

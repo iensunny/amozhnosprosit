@@ -75,3 +75,35 @@ test("accepting an invitation without signed MAX identity does not change member
   assert.match((await response.json()).error, /только в MAX/i);
   assert.equal(db.calls.some(({ operation }) => operation === "batch" || operation === "run"), false);
 });
+
+test("deleting your data deletes the whole pair so neither MAX account stays attached", async () => {
+  const token = "member-token-for-delete-test-123456";
+  const pair = { id: "pair-test-123", status: "active" };
+  const calls = [];
+  const db = {
+    prepare(sql) {
+      return {
+        bind(...values) {
+          return {
+            async first() {
+              if (sql.startsWith("SELECT * FROM pairs")) return pair;
+              if (sql.startsWith("SELECT id, name, role, position, max_user_id FROM members")) {
+                return { id: "member-test-1", name: "Участник", role: "adult", position: 0, max_user_id: null };
+              }
+              return null;
+            },
+            async run() { calls.push({ sql, values }); return { meta: { changes: 1 } }; }
+          };
+        }
+      };
+    }
+  };
+  const response = await worker.fetch(new Request(`https://app.example/api/pairs/${pair.id}/members/member-test-1`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` }
+  }), { ...env, DB: db });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true });
+  assert.deepEqual(calls, [{ sql: "DELETE FROM pairs WHERE id = ?", values: [pair.id] }]);
+});

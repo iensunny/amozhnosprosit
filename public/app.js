@@ -356,7 +356,7 @@ function draw() {
 }
 function dialogMarkup() {
   if (shareDialog) return `<div class="action-sheet invite-link-sheet"><section><h2>Ссылка приглашения</h2><p>Отправьте приглашение в MAX или скопируйте ссылку.</p><input id="invite-link" class="invite-link-preview" readonly value="${esc(shareDialog)}" aria-label="Ссылка приглашения"/><button class="button button-primary" data-action="send-invite-link">Отправить в MAX</button><button class="button invite-copy-button" data-action="copy-invite-link">Скопировать ссылку</button><button class="sheet-link" data-action="close-dialog">Готово</button></section></div>`;
-  if (typeof deleteDialog !== 'undefined' && deleteDialog) return `<div class="action-sheet"><section><h2>Удалить мои данные?</h2><p>Имя, доступ к этой паре и данные на этом устройстве будут удалены. У близкого человека его данные останутся.</p><button class="button button-primary" data-action="confirm-reset">Удалить мои данные</button><button class="sheet-link" data-action="close-dialog">Отмена</button></section></div>`;
+  if (typeof deleteDialog !== 'undefined' && deleteDialog) return `<div class="action-sheet"><section><h2>Удалить данные пары?</h2><p>Будут удалены оба профиля и вся пара: MAX-привязки, открытые вопросы и отметки. Близкий человек тоже выйдет из пары и сможет присоединиться заново.</p><button class="button button-primary" data-action="confirm-reset">Удалить данные обоих</button><button class="sheet-link" data-action="close-dialog">Отмена</button></section></div>`;
   if (typeof questionDialog !== 'undefined' && questionDialog) return `<div class="action-sheet"><section><h2>${questionDialog.type === 'replace' ? 'Другой вопрос?' : 'Пропустить вопрос?'}</h2><p>${questionDialog.type === 'replace' ? 'Можно заменить вопрос один раз. Первый вопрос не сохранится в дневнике.' : 'Сегодня будет без вопроса. Новый появится завтра.'}</p><button class="button button-primary" data-action="confirm-question-choice">${questionDialog.type === 'replace' ? 'Показать другой' : 'Пропустить'}</button><button class="sheet-link" data-action="close-dialog">Оставить как есть</button></section></div>`;
   if (typeof conversationDialog === 'undefined' || !conversationDialog) return '';
   if (conversationDialog.stage === 'not-yet') return `<div class="action-sheet"><section><h2>Ничего страшного</h2><p>Вопрос останется доступным — к нему можно вернуться позже.</p><button class="button button-primary" data-action="close-dialog">Вернуться к вопросу</button></section></div>`;
@@ -820,8 +820,8 @@ async function refreshPair() {
     else if (['waiting', 'settings', 'days', 'diary', 'home', 'after-mark'].includes(screen)) render();
   } catch (error) {
     if (error.message === 'Invitation not found') {
-      state.circles = []; state.activeCircleId = null; state.memberToken = null; state.invitationToken = null;
-      save(); go('invite-how');
+      state = { profile: null, circles: [], activeCircleId: null, diary: [], marks: {}, introAccepted: false, rulesSeen: false, memberToken: null, invitationToken: null };
+      save(); go('onboarding');
     }
     /* A transient connection issue should not erase local state. */
   }

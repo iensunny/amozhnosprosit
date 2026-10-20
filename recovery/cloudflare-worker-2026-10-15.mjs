@@ -341,15 +341,10 @@ async function api(request, env, pathname) {
     }
     if (parts.length === 5 && parts[3] === "members" && validId(parts[4]) && request.method === "DELETE") {
       if (parts[4] !== actor.id) return json({ error: "Cannot delete another participant" }, 403);
-      await db.batch([
-        db.prepare("DELETE FROM marks WHERE pair_id = ?").bind(pair.id),
-        db.prepare("DELETE FROM question_days WHERE pair_id = ?").bind(pair.id),
-        db.prepare("DELETE FROM members WHERE id = ? AND pair_id = ?").bind(actor.id, pair.id),
-        db.prepare("UPDATE members SET position = 0 WHERE pair_id = ?").bind(pair.id),
-        db.prepare("UPDATE pairs SET status = 'pending', started_at = NULL, invite_hash = NULL, invite_expires_at = NULL WHERE id = ?").bind(pair.id)
-      ]);
-      const remaining = await db.prepare("SELECT COUNT(*) AS count FROM members WHERE pair_id = ?").bind(pair.id).first();
-      if (!remaining.count) await db.prepare("DELETE FROM pairs WHERE id = ?").bind(pair.id).run();
+      // A pair is a single account relationship. Keeping the other member
+      // would retain their MAX ID and prevent them from joining a new pair.
+      // The foreign keys cascade deletion to both members and all pair data.
+      await db.prepare("DELETE FROM pairs WHERE id = ?").bind(pair.id).run();
       return json({ ok: true });
     }
     return json({ error: "Not found" }, 404);
