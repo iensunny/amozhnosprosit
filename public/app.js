@@ -355,7 +355,7 @@ function draw() {
   return shell(`${logo()}${nav('home')}`);
 }
 function dialogMarkup() {
-  if (shareDialog) return `<div class="action-sheet invite-link-sheet"><section><h2>Ссылка приглашения</h2><p>Нажмите на ссылку, скопируйте её и отправьте близкому человеку.</p><textarea id="invite-link" readonly aria-label="Ссылка приглашения">${esc(shareDialog)}</textarea><button class="sheet-link" data-action="close-dialog">Готово</button></section></div>`;
+  if (shareDialog) return `<div class="action-sheet invite-link-sheet"><section><h2>Ссылка приглашения</h2><p>Отправьте приглашение в MAX или скопируйте ссылку.</p><input id="invite-link" class="invite-link-preview" readonly value="${esc(shareDialog)}" aria-label="Ссылка приглашения"/><button class="button button-primary" data-action="send-invite-link">Отправить в MAX</button><button class="button invite-copy-button" data-action="copy-invite-link">Скопировать ссылку</button><button class="sheet-link" data-action="close-dialog">Готово</button></section></div>`;
   if (typeof deleteDialog !== 'undefined' && deleteDialog) return `<div class="action-sheet"><section><h2>Удалить мои данные?</h2><p>Имя, доступ к этой паре и данные на этом устройстве будут удалены. У близкого человека его данные останутся.</p><button class="button button-primary" data-action="confirm-reset">Удалить мои данные</button><button class="sheet-link" data-action="close-dialog">Отмена</button></section></div>`;
   if (typeof questionDialog !== 'undefined' && questionDialog) return `<div class="action-sheet"><section><h2>${questionDialog.type === 'replace' ? 'Другой вопрос?' : 'Пропустить вопрос?'}</h2><p>${questionDialog.type === 'replace' ? 'Можно заменить вопрос один раз. Первый вопрос не сохранится в дневнике.' : 'Сегодня будет без вопроса. Новый появится завтра.'}</p><button class="button button-primary" data-action="confirm-question-choice">${questionDialog.type === 'replace' ? 'Показать другой' : 'Пропустить'}</button><button class="sheet-link" data-action="close-dialog">Оставить как есть</button></section></div>`;
   if (typeof conversationDialog === 'undefined' || !conversationDialog) return '';
@@ -539,11 +539,44 @@ async function acceptInvite(name, role) {
   } catch (error) { toast(error.message); }
 }
 async function share(url) {
-  try { await navigator.clipboard?.writeText(url); } catch {}
-  // Always show the actual URL. Browser-provided sharing can complete without
-  // a visible sheet, which makes an invitation look as if it was never made.
   shareDialog = url;
   render();
+}
+
+async function copyInviteLink() {
+  const input = $('#invite-link');
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(shareDialog);
+      toast('Ссылка скопирована');
+      return;
+    }
+  } catch {}
+  if (input) {
+    input.focus();
+    input.select();
+    try {
+      if (document.execCommand('copy')) { toast('Ссылка скопирована'); return; }
+    } catch {}
+  }
+  toast('Не удалось скопировать. Попробуйте отправить ссылку через MAX.');
+}
+
+async function sendInviteLink() {
+  const message = 'Присоединяйся к нашей паре в приложении «А можно спросить?»';
+  try {
+    if (typeof window.WebApp?.shareMaxContent === 'function') {
+      await window.WebApp.shareMaxContent({ text: message, link: shareDialog });
+      return;
+    }
+    if (typeof navigator.share === 'function') {
+      await navigator.share({ text: message, url: shareDialog });
+      return;
+    }
+  } catch (error) {
+    if (error?.name === 'AbortError') return;
+  }
+  await copyInviteLink();
 }
 
 async function shareQuestionCard() {
@@ -620,6 +653,8 @@ async function action(button) {
   }
   if (type === 'conversation-not-yet') { conversationDialog.stage = 'not-yet'; render(); return; }
   if (type === 'close-dialog') { conversationDialog = null; questionDialog = null; deleteDialog = false; shareDialog = ''; render(); return; }
+  if (type === 'copy-invite-link') { await copyInviteLink(); return; }
+  if (type === 'send-invite-link') { await sendInviteLink(); return; }
   if (type === 'replace-question' || type === 'skip-question') {
     const prompt = dailyQuestion(pair);
     if (!prompt || prompt.asker.id !== state.profile?.id || pair.marks?.[prompt.key]) return;

@@ -148,6 +148,10 @@ h1, h2, p { overflow-wrap: anywhere; }
 .sheet-link { display: block; width: 100%; min-height: 42px; margin-top: 8px; border: 0; background: transparent; color: var(--terra); cursor: pointer; font: 14px var(--serif); }
 .action-sheet textarea { display: block; width: 100%; min-height: 90px; margin-top: 7px; padding: 11px 12px; resize: none; border: 1px solid var(--line); border-radius: 14px; background: #fffdf9; font: 16px/1.35 var(--sans); }
 .invite-link-sheet textarea { min-height: 108px; color: var(--ink); overflow-wrap: anywhere; }
+.invite-link-sheet section { width: 100%; max-height: min(78dvh, 560px); overflow-y: auto; }
+.invite-link-preview { display: block; width: 100%; height: 50px; margin: 2px 0 8px; padding: 0 12px; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: #fffdf9; color: var(--muted); font: 12px/1.3 var(--sans); text-overflow: ellipsis; }
+.invite-link-sheet .button { width: 100%; margin-top: 9px; }
+.invite-link-sheet .invite-copy-button { border-color: rgba(186,99,69,.35); background: #fffdf9; color: var(--navy); }
 .flash-message { position: absolute; z-index: 30; left: 20px; right: 20px; bottom: calc(88px + env(safe-area-inset-bottom)); margin: 0; padding: 12px 14px; border-radius: 14px; background: rgba(22, 47, 68, .94); color: #fffdf9; box-shadow: 0 8px 22px rgba(22, 47, 68, .2); font: 13px/1.35 var(--sans); text-align: center; }
 .invite-ready-content .invite-reset-link { position: absolute; z-index: 5; top: 492px; left: 24px; width: calc(100% - 48px); min-height: 24px; border: 0; background: transparent; color: var(--terra); cursor: pointer; font: 14px var(--serif); }
 .invite-ready-content > .tip { top: 544px; }
