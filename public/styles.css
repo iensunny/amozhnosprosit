@@ -324,7 +324,7 @@ html.max-mobile .screen {
 .onboarding-purpose .onboarding-first { top: 205px; color: var(--muted); }
 .onboarding-purpose .onboarding-second { top: 343px; color: var(--navy); }
 .onboarding-purpose .onboarding-button { top: 520px; }
-.onboarding-legal { position: absolute; top: 579px; left: 49px; width: 277px; margin: 0; color: var(--muted); text-align: center; font: 10px/14px var(--sans); }
+.onboarding-legal { position: absolute; top: 579px; left: 49px; width: 277px; margin: 0; color: var(--muted); text-align: center; font: 9px/12px var(--sans); }
 .onboarding-legal a { color: var(--navy); text-decoration: underline; text-decoration-thickness: .06em; text-underline-offset: 2px; }
 .onboarding-rules h1 { top: 136px; }
 .rules-copy { position: absolute; top: 179px; left: 49px; width: 277px; max-height: 327px; overflow-y: auto; font: 400 12px/18px var(--serif); scrollbar-width: thin; }
