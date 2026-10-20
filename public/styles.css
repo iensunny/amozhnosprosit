@@ -151,7 +151,6 @@ h1, h2, p { overflow-wrap: anywhere; }
 .flash-message { position: absolute; z-index: 30; left: 20px; right: 20px; bottom: calc(88px + env(safe-area-inset-bottom)); margin: 0; padding: 12px 14px; border-radius: 14px; background: rgba(22, 47, 68, .94); color: #fffdf9; box-shadow: 0 8px 22px rgba(22, 47, 68, .2); font: 13px/1.35 var(--sans); text-align: center; }
 .invite-ready-content .invite-reset-link { position: absolute; z-index: 5; top: 492px; left: 24px; width: calc(100% - 48px); min-height: 24px; border: 0; background: transparent; color: var(--terra); cursor: pointer; font: 14px var(--serif); }
 .invite-ready-content > .tip { top: 544px; }
-.private-note { display: block; margin-top: 6px; color: var(--muted); font: 11px/1.35 var(--sans); font-style: normal; }
 button:not(:disabled):active { transform: scale(.975); filter: brightness(.96); }
 /* Scale the whole artboard on mobile/MAX to preserve the Figma layout. */
 html.max-mobile, html.max-mobile body { width: 100%; height: 100%; overflow: hidden; background: var(--paper); }
@@ -320,8 +319,9 @@ html.max-mobile .screen {
 .onboarding-purpose p { position: absolute; left: 49px; width: 277px; margin: 0; font: 400 13.5px/20px var(--serif); }
 .onboarding-purpose .onboarding-first { top: 205px; color: var(--muted); }
 .onboarding-purpose .onboarding-second { top: 343px; color: var(--navy); }
-.onboarding-ack { position: absolute; top: 454px; left: 49px; display: flex; align-items: center; gap: 9px; font: 12px/18px var(--sans); cursor: pointer; }
-.onboarding-ack input { width: 17px; height: 17px; margin: 0; accent-color: var(--terra); }
+.onboarding-purpose .onboarding-button { top: 520px; }
+.onboarding-legal { position: absolute; top: 579px; left: 49px; width: 277px; margin: 0; color: var(--muted); text-align: center; font: 10px/14px var(--sans); }
+.onboarding-legal a { color: var(--navy); text-decoration: underline; text-decoration-thickness: .06em; text-underline-offset: 2px; }
 .onboarding-rules h1 { top: 136px; }
 .rules-copy { position: absolute; top: 179px; left: 49px; width: 277px; max-height: 327px; overflow-y: auto; font: 400 12px/18px var(--serif); scrollbar-width: thin; }
 .rules-copy p { margin: 0 0 13px; }

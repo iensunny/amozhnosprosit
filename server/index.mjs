@@ -120,6 +120,18 @@ cron.schedule("0 * * * *", () => {
   worker.scheduled({}, env, { waitUntil: promise => promise.catch(error => console.error("Scheduled task failed", error)) });
 });
 
+async function purgeExpiredDiagnostics() {
+  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  try {
+    await pool.execute("DELETE FROM diagnostic_events WHERE created_at < ?", [cutoff]);
+  } catch (error) {
+    console.error("Diagnostic retention cleanup failed", error.message);
+  }
+}
+
+void purgeExpiredDiagnostics();
+cron.schedule("* * * * *", () => void purgeExpiredDiagnostics());
+
 server.listen(Number(process.env.PORT || 8080), "0.0.0.0", () => {
   console.log(`Listening on port ${process.env.PORT || 8080}`);
 });

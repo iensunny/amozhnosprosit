@@ -6,6 +6,10 @@ const inviteToken = typeof maxStartParam === 'string' && maxStartParam ? maxStar
 const LOCAL_PREVIEW = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(location.hostname);
 let maxBotName = 'se14681938_bot';
 const LOCAL_PREVIEW_PAIRS = 'amozhno-local-preview-pairs-v1';
+const LEGAL_DOCUMENT_URLS = {
+  terms: 'https://79-174-82-103.regru.cloud/terms-of-use.html',
+  privacy: 'https://79-174-82-103.regru.cloud/privacy-policy.html'
+};
 const resetLocalPreview = LOCAL_PREVIEW && new URLSearchParams(location.search).has('reset-preview');
 let STORE = BASE_STORE;
 try {
@@ -115,7 +119,7 @@ function maxInitDataHeader() {
     return `b64:${btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
   } catch { return ''; }
 }
-let state = { profile: null, circles: [], activeCircleId: null, diary: [], marks: {}, privateNotes: {}, introAccepted: false, rulesSeen: false, memberToken: null, invitationToken: null };
+let state = { profile: null, circles: [], activeCircleId: null, diary: [], marks: {}, introAccepted: false, rulesSeen: false, memberToken: null, invitationToken: null };
 let screen = 'splash';
 let incomingInvite = null;
 let inviteStartupError = false;
@@ -158,6 +162,14 @@ if (state.profile?.name && !Object.hasOwn(saved || {}, 'introAccepted')) state.i
 if (state.profile?.name && !Object.hasOwn(saved || {}, 'rulesSeen')) state.rulesSeen = true;
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
+function legalDocumentLabel(label, url) {
+  if (!url) return `<span>${label}</span>`;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return `<span>${label}</span>`;
+    return `<a href="${esc(parsed.href)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  } catch { return `<span>${label}</span>`; }
+}
 const roleName = (role) => role === 'child' ? 'Ребёнок' : 'Взрослый';
 function pluralForm(number, one, few, many) {
   const mod100 = Math.abs(number) % 100, mod10 = mod100 % 10;
@@ -291,7 +303,7 @@ function draw() {
   if (screen === 'splash') return shell(`<img class="splash-partner-logo" src="assets/delis-ui-decorations/fond-zashchity-detey-yugra-trimmed.png" alt="Фонд защиты детей Югры"/><div class="splash-brand">${logo()}</div><img class="splash-ground" src="assets/delis-ui-decorations/figma-splash-hill.png" alt=""/><img class="splash-sprig" src="assets/delis-ui-decorations/figma-splash-branch.png" alt=""/><img class="splash-sprout" src="assets/delis-ui-decorations/figma-splash-sprout.png" alt=""/>`);
   if (screen === 'max-required') return shell(`${logo()}<main class="onboarding-content onboarding-gate"><h1>Откройте приложение в MAX</h1><p>${incomingInvite ? 'Приглашение можно принять только внутри MAX. Откройте его там, чтобы присоединиться к близкому человеку.' : 'Создать пару и пользоваться приложением можно только в MAX — так участники будут привязаны к своим аккаунтам.'}</p><button class="button button-primary onboarding-button" data-action="open-max">Открыть в MAX</button></main>`);
   if (screen === 'invite-checking') return shell(`${logo()}<main class="onboarding-content onboarding-gate"><h1>${inviteStartupError ? 'Не удалось проверить приглашение' : 'Открываем приглашение'}</h1><p>${inviteStartupError ? 'Проверьте подключение к интернету и попробуйте ещё раз.' : 'Подождите немного — готовим экран для присоединения.'}</p><button class="button button-primary onboarding-button" data-action="retry-start">${inviteStartupError ? 'Повторить' : 'Проверить ещё раз'}</button></main>`);
-  if (screen === 'onboarding') return shell(`${logo('figma-onboarding-wordmark.png')}<main class="onboarding-content onboarding-purpose"><h1>Ближе — через разговор</h1><p class="onboarding-first">«А можно спросить?» помогает родителям и подросткам узнавать друг друга с новой стороны. Один вопрос в день — повод поговорить о том, на что обычно не хватает времени или слов.</p><p class="onboarding-second">Здесь можно делиться мыслями и историями без правильных ответов и оценок. Приложение не хранит ваши ответы — разговор остаётся между вами.</p><label class="onboarding-ack"><input id="intro-ack" type="checkbox"><span>Я понял(а)</span></label><button class="button button-primary onboarding-button" data-action="accept-intro">Продолжить</button></main>`);
+  if (screen === 'onboarding') return shell(`${logo('figma-onboarding-wordmark.png')}<main class="onboarding-content onboarding-purpose"><h1>Ближе — через разговор</h1><p class="onboarding-first">«А можно спросить?» помогает родителям и подросткам узнавать друг друга с новой стороны. Один вопрос в день — повод поговорить о том, на что обычно не хватает времени или слов.</p><p class="onboarding-second">Здесь можно делиться мыслями и историями без правильных ответов и оценок. Приложение не хранит ваши ответы — разговор остаётся между вами.</p><button class="button button-primary onboarding-button" data-action="accept-intro">Продолжить</button><p class="onboarding-legal">Нажимая „Продолжить“, вы принимаете ${legalDocumentLabel('Пользовательское соглашение', LEGAL_DOCUMENT_URLS.terms)} и подтверждаете, что ознакомились с ${legalDocumentLabel('Политикой обработки персональных данных', LEGAL_DOCUMENT_URLS.privacy)}.</p></main>`);
   if (screen === 'how-it-works') return shell(`${logo()}<main class="onboarding-content onboarding-rules"><h1>Как это работает</h1><div class="rules-copy"><p>Создайте приглашение и дождитесь, когда близкий человек присоединится. Пока приглашение не принято, перейти к вопросам нельзя.</p><p>Каждый день вопрос получает один участник — тот, кому нужно задать его близкому. Сегодня вопрос для ребенка получает взрослый, завтра — наоборот.</p><p>Вопрос можно отправить карточкой и обсудить в удобное время. После разговора можно отметить его и перейти в раздел «Наши вопросы». Там будут собраны вопросы обоих участников из их дневников.</p><p>Можно не отвечать или пропустить вопрос. Ответы приложение не сохраняет.</p></div><button class="button button-primary onboarding-button" data-action="finish-rules">Продолжить</button></main>`);
   if (screen === 'name') return shell(`${logo()}<form id="name-form" class="setup-content"><article class="paper-card name-card"><p class="card-question">Как к тебе<br>обращаться?</p><input class="text-field" id="profile-name" name="name" value="${esc(state.profile?.name || '')}" maxlength="40" autocomplete="given-name" aria-label="Как к тебе обращаться" /><img class="name-brush" src="design_assets/delish-elements/04-terracotta-swish.png" alt=""/></article>${tip('Имя можно изменить позже', 'Будем обращаться к тебе именно так.')}<button class="button button-primary bottom-action" type="submit">Продолжить</button></form>`);
   if (screen === 'role') {
@@ -332,9 +344,9 @@ function draw() {
     return shell(`${logo()}<main class="days-content">${card(`<p class="days-number">${days}</p><p class="days-label">${pluralForm(days, 'день', 'дня', 'дней')} вместе</p><img class="days-brush" src="assets/delis-ui-decorations/terracotta-brushstroke.png" alt=""/><p class="dialogs-number">${dialogs}</p><p class="dialogs-label">${pluralForm(dialogs, 'разговор отмечен', 'разговора отмечено', 'разговоров отмечено')}</p><div class="days-plant-frame"><img src="assets/delis-ui-decorations/days-upright-exact.png" alt=""/></div>`, 'corner', 'days-card')}${otherTurn ? tip(`Сегодня вопрос у ${esc(today.asker.name)}`, 'Ваш следующий ход — завтра.') : tip('Ответы не сохраняются', 'В дневнике только отметки и открытые вопросы.')}<button class="button button-primary bottom-action" data-action="go" data-screen="diary">Наши вопросы</button></main>${nav('diary')}`);
   }
   if (screen === 'diary') {
-    const rows = pairQuestions(pair).map((entry) => `<div class="archive-row"><span>${esc(entry.text)}</span><small>${pair.questionDays?.[entry.day]?.skippedAt ? 'Пропущен' : pair.marks?.[entry.key] ? 'Разговор отмечен' : 'Вопрос открыт'}</small>${state.privateNotes?.[entry.day]?.text ? `<em class="private-note">Только вам: ${esc(state.privateNotes[entry.day].text)}</em>` : ''}</div>`).join('')
+    const rows = pairQuestions(pair).map((entry) => `<div class="archive-row"><span>${esc(entry.text)}</span><small>${pair.questionDays?.[entry.day]?.skippedAt ? 'Пропущен' : pair.marks?.[entry.key] ? 'Разговор отмечен' : 'Вопрос открыт'}</small></div>`).join('')
       || '<p class="archive-empty">Здесь появятся вопросы, которые вы открыли.</p>';
-    return shell(`${logo()}<main class="diary-content">${card(`<p class="archive-title">Наши вопросы</p><div class="archive-rows" tabindex="0" aria-label="Вопросы обоих участников">${rows}</div>`, 'corner', 'archive-card')}${tip('Только сами вопросы', 'Ответы не сохраняются. Личные заметки видны только вам.')}</main>${nav('diary')}`);
+    return shell(`${logo()}<main class="diary-content">${card(`<p class="archive-title">Наши вопросы</p><div class="archive-rows" tabindex="0" aria-label="Вопросы обоих участников">${rows}</div>`, 'corner', 'archive-card')}${tip('Только сами вопросы', 'Ответы не сохраняются.')}</main>${nav('diary')}`);
   }
   if (screen === 'settings') {
     return shell(`${logo()}<main class="settings-content">${card(`<p class="settings-title">Профиль и настройки</p><button class="settings-row" data-action="edit-name"><span>Как к тебе обращаться</span><small>Изменить имя</small></button>${pair?.status === 'pending' ? '<button class="settings-row invite-row" data-action="share-invite-link">Пригласительная ссылка</button>' : '<div class="settings-row invite-row" aria-label="Приглашение принято">Приглашение принято</div>'}<button class="settings-delete" data-action="reset">Удалить мои данные</button>`, 'plain', 'settings-card') }<button class="button button-primary bottom-action" data-action="about">О приложении</button>${tip('Спасибо, что ты с нами', '', 'figma-settings-sprout.png')}</main>${nav('settings')}`);
@@ -347,7 +359,6 @@ function dialogMarkup() {
   if (typeof deleteDialog !== 'undefined' && deleteDialog) return `<div class="action-sheet"><section><h2>Удалить мои данные?</h2><p>Имя, доступ к этой паре и данные на этом устройстве будут удалены. У близкого человека его данные останутся.</p><button class="button button-primary" data-action="confirm-reset">Удалить мои данные</button><button class="sheet-link" data-action="close-dialog">Отмена</button></section></div>`;
   if (typeof questionDialog !== 'undefined' && questionDialog) return `<div class="action-sheet"><section><h2>${questionDialog.type === 'replace' ? 'Другой вопрос?' : 'Пропустить вопрос?'}</h2><p>${questionDialog.type === 'replace' ? 'Можно заменить вопрос один раз. Первый вопрос не сохранится в дневнике.' : 'Сегодня будет без вопроса. Новый появится завтра.'}</p><button class="button button-primary" data-action="confirm-question-choice">${questionDialog.type === 'replace' ? 'Показать другой' : 'Пропустить'}</button><button class="sheet-link" data-action="close-dialog">Оставить как есть</button></section></div>`;
   if (typeof conversationDialog === 'undefined' || !conversationDialog) return '';
-  if (conversationDialog.stage === 'note') return `<div class="action-sheet"><section><h2>Поговорили</h2><label>Личная заметка <small>необязательно, видна только вам</small><textarea id="private-note" maxlength="1000" placeholder="Что хочется запомнить?"></textarea></label><button class="button button-primary" data-action="save-conversation">Сохранить</button><button class="sheet-link" data-action="close-dialog">Отмена</button></section></div>`;
   if (conversationDialog.stage === 'not-yet') return `<div class="action-sheet"><section><h2>Ничего страшного</h2><p>Вопрос останется доступным — к нему можно вернуться позже.</p><button class="button button-primary" data-action="close-dialog">Вернуться к вопросу</button></section></div>`;
   return `<div class="action-sheet"><section><h2>Удалось поговорить?</h2><button class="button button-primary" data-action="conversation-talked">Да, поговорили</button><button class="sheet-link" data-action="conversation-not-yet">Сегодня не получилось</button><button class="sheet-link" data-action="close-dialog">Пока не отмечать</button></section></div>`;
 }
@@ -356,7 +367,6 @@ function render() {
   if (typeof window.__amozhnoBooted === 'function') window.__amozhnoBooted();
   $('#app').innerHTML = draw(); $('#app').dataset.screen = screen; $('#app').scrollTop = 0;
   if (screen === 'home') void ensureQuestionOpened();
-  if (screen === 'diary') void loadPrivateNotes();
 }
 
 function b64url(value) { return btoa(unescape(encodeURIComponent(JSON.stringify(value)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
@@ -421,12 +431,6 @@ async function previewRequest(path, options = {}) {
   if (actionPath === 'marks' && method === 'POST') {
     const key = `${pair.id}:${body.day}`; pair.marks ||= {}; pair.marks[key] = { markedAt: new Date().toISOString() };
     previewSavePair(pair); return pair;
-  }
-  if (actionPath === 'notes' && method === 'GET') return { notes: pair.notes || {} };
-  const note = actionPath.match(/^notes\/(\d+)$/);
-  if (note && method === 'PUT') {
-    pair.notes ||= {}; pair.notes[note[1]] = { text: String(body.text || ''), updatedAt: new Date().toISOString() };
-    previewSavePair(pair); return { note: pair.notes[note[1]] };
   }
   const member = actionPath.match(/^members\/([^/]+)$/);
   if (member && method === 'PATCH') {
@@ -534,18 +538,6 @@ async function acceptInvite(name, role) {
     replaceAppUrl(location.pathname); go('connected');
   } catch (error) { toast(error.message); }
 }
-async function loadPrivateNotes() {
-  const pair = circle();
-  if (!pair || !state.memberToken) return;
-  try {
-    const nextNotes = (await request(`/api/pairs/${pair.id}/notes`)).notes || {};
-    if (JSON.stringify(nextNotes) !== JSON.stringify(state.privateNotes || {})) {
-      state.privateNotes = nextNotes;
-      save();
-      render();
-    }
-  } catch {}
-}
 async function share(url) {
   try { await navigator.clipboard?.writeText(url); } catch {}
   // Always show the actual URL. Browser-provided sharing can complete without
@@ -607,7 +599,7 @@ async function action(button) {
   }
   if (type === 'retry-start') { void start(); return; }
   if (type === 'go') { go(button.dataset.screen); return; }
-  if (type === 'accept-intro') { if (!$('#intro-ack')?.checked) return; state.introAccepted = true; save(); go('how-it-works'); return; }
+  if (type === 'accept-intro') { state.introAccepted = true; save(); go('how-it-works'); return; }
   if (type === 'finish-rules') { state.rulesSeen = true; save(); go('name'); return; }
   if (type === 'create-circle') { await createCircle(); return; }
   if (type === 'accept-invite') { await acceptInvite(state.profile.name, state.profile.role); return; }
@@ -616,23 +608,18 @@ async function action(button) {
     if (!prompt || prompt.asker.id !== state.profile?.id) return;
     conversationDialog = { day: prompt.day, stage: 'outcome' }; render(); return;
   }
-  if (type === 'conversation-talked') { conversationDialog.stage = 'note'; render(); return; }
-  if (type === 'conversation-not-yet') { conversationDialog.stage = 'not-yet'; render(); return; }
-  if (type === 'close-dialog') { conversationDialog = null; questionDialog = null; deleteDialog = false; shareDialog = ''; render(); return; }
-  if (type === 'save-conversation') {
-    const prompt = dailyQuestion(pair), text = $('#private-note')?.value || '';
+  if (type === 'conversation-talked') {
+    const prompt = dailyQuestion(pair);
     if (!prompt) return;
     try {
       updatePair(await request(`/api/pairs/${pair.id}/marks`, { method: 'POST', body: JSON.stringify({ day: prompt.day }) }));
-      if (text.trim()) {
-        const result = await request(`/api/pairs/${pair.id}/notes/${prompt.day}`, { method: 'PUT', body: JSON.stringify({ text }) });
-        state.privateNotes[prompt.day] = result.note;
-      }
       conversationDialog = null;
       go('after-mark');
     } catch (error) { toast(error.message); }
     return;
   }
+  if (type === 'conversation-not-yet') { conversationDialog.stage = 'not-yet'; render(); return; }
+  if (type === 'close-dialog') { conversationDialog = null; questionDialog = null; deleteDialog = false; shareDialog = ''; render(); return; }
   if (type === 'replace-question' || type === 'skip-question') {
     const prompt = dailyQuestion(pair);
     if (!prompt || prompt.asker.id !== state.profile?.id || pair.marks?.[prompt.key]) return;
