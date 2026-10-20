@@ -267,11 +267,21 @@ async function api(request, env, pathname) {
     if (parts.length === 4 && parts[3] === "accept" && request.method === "POST") diagnosticStage = "load_pair";
     const pair = await pairById(db, parts[2]);
     if (!pair) return json({ error: "Invitation not found" }, 404);
+    if (parts.length === 4 && parts[3] === "invite-role" && request.method === "POST") {
+      const { invitationToken } = await bodyOf(request);
+      if (typeof invitationToken !== "string" || !pair.invite_hash || await digest(invitationToken) !== pair.invite_hash || Date.now() > Date.parse(pair.invite_expires_at || 0))
+        return json({ error: "Приглашение недействительно или срок его действия истёк" }, 403);
+      if (pair.status !== "pending") return json({ error: "Приглашение уже принято" }, 409);
+      const inviter = await db.prepare("SELECT role FROM members WHERE pair_id = ? AND position = 0").bind(pair.id).first();
+      if (!inviter || !["adult", "child"].includes(inviter.role)) return json({ error: "Не удалось определить роль участника" }, 409);
+      return json({ role: inviter.role === "adult" ? "child" : "adult" });
+    }
     if (parts.length === 4 && parts[3] === "accept" && request.method === "POST") {
       diagnosticStage = "read_request";
       const { member, invitationToken } = await bodyOf(request);
       diagnosticStage = "validate_invitation";
-      if (!validMember(member) || typeof invitationToken !== "string" || !pair.invite_hash || await digest(invitationToken) !== pair.invite_hash || Date.now() > Date.parse(pair.invite_expires_at || 0))
+      if (!validMember(member)) return json({ error: "Проверьте имя и роль участника" }, 400);
+      if (typeof invitationToken !== "string" || !pair.invite_hash || await digest(invitationToken) !== pair.invite_hash || Date.now() > Date.parse(pair.invite_expires_at || 0))
         return json({ error: "Invitation is invalid or expired" }, 403);
       diagnosticStage = "load_first_member";
       const existing = await db.prepare("SELECT role FROM members WHERE pair_id = ? AND position = 0").bind(pair.id).first();

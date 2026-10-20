@@ -775,7 +775,9 @@ async function start() {
   } catch { /* The documented public bot name remains a safe fallback. */ }
   let inviteRole = null;
   if (incomingInvite && !circle()) {
-    inviteRole = request(`/api/pairs/${encodeURIComponent(incomingInvite.id)}/invite-role`, { timeoutMs: 4000 });
+    inviteRole = request(`/api/pairs/${encodeURIComponent(incomingInvite.id)}/invite-role`, {
+      method: 'POST', body: JSON.stringify({ invitationToken: incomingInvite.token }), timeoutMs: 4000
+    });
   }
   await restore;
   if (inviteRole) {
