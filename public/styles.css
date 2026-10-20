@@ -68,6 +68,9 @@ h1, h2, p { overflow-wrap: anywhere; }
 .onboarding-content { position: absolute; inset: 0; }
 .onboarding-content h1 { position: absolute; top: 134px; left: 104px; width: 168px; margin: 0; font: 400 22px/1.2 var(--serif); text-align: center; }
 .onboarding-content h1 span { color: var(--terra); }
+.onboarding-gate h1 { top: 137px; left: 48px; width: 279px; font: 400 22px/29px var(--serif); }
+.onboarding-gate p { position: absolute; top: 230px; left: 49px; width: 277px; margin: 0; text-align: center; font: 400 14px/21px var(--serif); }
+.onboarding-gate .onboarding-button { top: 520px; }
 .intro { position: absolute; top: 177px; left: 49px; width: 219px; margin: 0; color: var(--muted); font: 400 13px/1.5 var(--serif); }
 .promise { position: absolute; left: 48px; width: 270px; padding: 0; }
 .promise-do { top: 264px; }
