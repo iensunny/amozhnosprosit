@@ -48,6 +48,97 @@ test("public config exposes the MAX bot name used by invitation links", async ()
   assert.deepEqual(await response.json(), { maxBotName: "test_bot" });
 });
 
+test("telemetry accepts only bounded categories and stores no caller identity or free text", async () => {
+  const saved = [];
+  const db = {
+    prepare(sql) { return { bind(...values) { return { sql, values }; } }; },
+    async batch(statements) { saved.push(...statements); return []; }
+  };
+  const response = await callApi("/api/telemetry", {
+    appVersion: "20261026-1", platform: "max",
+    events: [{ eventName: "api", stage: "accept", result: "error", durationMs: 850, httpStatus: 403,
+      maxUserId: "987654321", invitationToken: "never-store-this", message: "free text must not be stored" }]
+  }, db);
+  assert.equal(response.status, 204);
+  assert.equal(saved.length, 1);
+  assert.match(saved[0].sql, /INSERT INTO telemetry_events/);
+  assert.deepEqual(saved[0].values.slice(2), ["api", "accept", "error", 850, 403, "20261026-1", "max"]);
+  assert.equal(saved[0].values.some((value) => String(value).includes("never-store-this")), false);
+});
+
+test("telemetry rejects arbitrary event fields and does not write invalid events", async () => {
+  const db = mockDb();
+  const invalidEvents = [
+    { eventName: "api", stage: "unknown-user-route" },
+    { eventName: "api", stage: "send_daily" },
+    { eventName: "notification", stage: "unknown-notification-stage" }
+  ];
+  for (const { eventName, stage } of invalidEvents) {
+    const response = await callApi("/api/telemetry", {
+      events: [{ eventName, stage, result: "ok", durationMs: 1, httpStatus: 200 }]
+    }, db);
+    assert.equal(response.status, 400);
+  }
+  assert.equal(db.calls.some(({ operation }) => operation === "batch"), false);
+});
+
+test("MAX bot_started sends a single formatted welcome per MAX user", async () => {
+  const records = new Map();
+  const sent = [];
+  const db = {
+    prepare(sql) {
+      return { bind(...values) {
+        return {
+          async run() {
+            const [firstValue, secondValue] = values;
+            if (sql.startsWith("INSERT OR IGNORE INTO bot_welcomes")) {
+              if (records.has(firstValue)) return { meta: { changes: 0 } };
+              records.set(firstValue, { status: "processing", updated_at: secondValue });
+              return { meta: { changes: 1 } };
+            }
+            if (sql.startsWith("UPDATE bot_welcomes")) {
+              const status = /SET status = '([^']+)'/.exec(sql)?.[1];
+              const record = records.get(secondValue);
+              if (record && status) { record.status = status; record.updated_at = firstValue; }
+              return { meta: { changes: record ? 1 : 0 } };
+            }
+            return { meta: { changes: 0 } };
+          },
+          async first() { return records.get(values[0]) || null; }
+        };
+      } };
+    }
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => { sent.push({ url, body: JSON.parse(options.body) }); return { ok: true, status: 200 }; };
+  try {
+    const makeRequest = () => new Request("https://app.example/api/max/webhook", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Max-Bot-Api-Secret": "test-webhook-secret" },
+      body: JSON.stringify({ update_type: "bot_started", user: { user_id: 123456789 } })
+    });
+    const first = await worker.fetch(makeRequest(), { ...env, DB: db, MAX_WEBHOOK_SECRET: "test-webhook-secret", BOT_WELCOME_ENABLED: true });
+    const second = await worker.fetch(makeRequest(), { ...env, DB: db, MAX_WEBHOOK_SECRET: "test-webhook-secret", BOT_WELCOME_ENABLED: true });
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].body.format, "markdown");
+    assert.match(sent[0].body.text, /Добро пожаловать/);
+    assert.equal(sent[0].body.attachments[0].payload.buttons[0][0].text, "Открыть приложение");
+    assert.equal(records.get("123456789").status, "sent");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("MAX webhook rejects requests with an invalid secret before reading user data", async () => {
+  const db = mockDb();
+  const response = await worker.fetch(new Request("https://app.example/api/max/webhook", {
+    method: "POST", headers: { "X-Max-Bot-Api-Secret": "wrong", "Content-Type": "application/json" },
+    body: JSON.stringify({ update_type: "bot_started", user: { user_id: 123456789 } })
+  }), { ...env, DB: db, MAX_WEBHOOK_SECRET: "expected-secret" });
+  assert.equal(response.status, 401);
+  assert.equal(db.calls.length, 0);
+});
+
 test("creating a pair without signed MAX identity is rejected before database access", async () => {
   const db = mockDb();
   const response = await callApi("/api/pairs", {

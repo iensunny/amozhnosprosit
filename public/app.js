@@ -119,6 +119,68 @@ function maxInitDataHeader() {
     return `b64:${btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
   } catch { return ''; }
 }
+const APP_VERSION = '20261026-2';
+let telemetryQueue = [];
+let telemetryTimer = null;
+let telemetrySending = false;
+function recordTelemetry(eventName, stage, result, durationMs = null, httpStatus = null) {
+  if (LOCAL_PREVIEW) return;
+  telemetryQueue.push({
+    eventName, stage, result,
+    durationMs: Number.isFinite(durationMs) ? Math.max(0, Math.min(120000, Math.round(durationMs))) : null,
+    httpStatus: Number.isInteger(httpStatus) ? httpStatus : null
+  });
+  if (telemetryQueue.length >= 20) void flushTelemetry();
+  else if (telemetryTimer === null) telemetryTimer = window.setTimeout(() => void flushTelemetry(), 1500);
+}
+async function flushTelemetry() {
+  if (telemetrySending || !telemetryQueue.length) return;
+  if (telemetryTimer !== null) window.clearTimeout(telemetryTimer);
+  telemetryTimer = null;
+  telemetrySending = true;
+  const events = telemetryQueue.splice(0, 20);
+  try {
+    const response = await fetch('/api/telemetry', {
+      method: 'POST', keepalive: true,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ events, appVersion: APP_VERSION, platform: maxInitData() ? 'max' : 'browser' })
+    });
+    if (!response.ok) throw new Error('telemetry rejected');
+  } catch {
+    // Diagnostic reporting must never interrupt the app. Failed batches are
+    // discarded rather than persisted locally or retried indefinitely.
+  } finally {
+    telemetrySending = false;
+    if (telemetryQueue.length && telemetryTimer === null) telemetryTimer = window.setTimeout(() => void flushTelemetry(), 1500);
+  }
+}
+function telemetryApiStage(path, method) {
+  if (path === '/api/config') return 'config';
+  if (path === '/api/max/restore') return 'max_restore';
+  if (path === '/api/pairs' && method === 'POST') return 'pairs_create';
+  if (/^\/api\/pairs\/[^/]+\/invite-role(?:\?|$)/.test(path)) return 'invite_role';
+  if (/^\/api\/pairs\/[^/]+\/accept(?:\?|$)/.test(path)) return 'accept';
+  if (/^\/api\/pairs\/[^/]+\/invite(?:\?|$)/.test(path)) return 'invite_refresh';
+  if (/^\/api\/pairs\/[^/]+\/question(?:\?|$)/.test(path)) return 'question';
+  if (/^\/api\/pairs\/[^/]+\/marks(?:\?|$)/.test(path)) return 'marks';
+  if (/^\/api\/pairs\/[^/]+\/members\/[^/]+(?:\?|$)/.test(path)) return method === 'DELETE' ? 'pair_delete' : 'member_update';
+  if (/^\/api\/pairs\/[^/]+(?:\?|$)/.test(path)) return 'pair_get';
+  return null;
+}
+window.addEventListener('pagehide', () => void flushTelemetry());
+window.addEventListener('load', () => {
+  const navigation = performance.getEntriesByType?.('navigation')?.[0];
+  if (navigation) {
+    recordTelemetry('startup', 'document_ttfb', 'ok', navigation.responseStart);
+    recordTelemetry('startup', 'document_load', 'ok', navigation.loadEventEnd || navigation.duration);
+  }
+  const resources = performance.getEntriesByType?.('resource') || [];
+  for (const [needle, stage] of [['styles.css', 'css'], ['app.js', 'js']]) {
+    const resource = resources.find((entry) => entry.name.includes(needle));
+    if (resource) recordTelemetry('startup', stage, 'ok', resource.duration);
+  }
+  void flushTelemetry();
+}, { once: true });
 let state = { profile: null, circles: [], activeCircleId: null, diary: [], marks: {}, introAccepted: false, rulesSeen: false, memberToken: null, invitationToken: null };
 let screen = 'splash';
 let incomingInvite = null;
@@ -126,6 +188,7 @@ let inviteStartupError = false;
 let startupRun = 0;
 let questions = { child: [], adult: [] };
 let questionsReady = false;
+let firstQuestionReadyTracked = false;
 let lastShownDay = '';
 let openingQuestion = false;
 let conversationDialog = null;
@@ -198,6 +261,10 @@ function go(next) {
     else if (prompt && pair?.marks?.[prompt.key]) next = 'after-mark';
   }
   screen = next;
+  if (next === 'home' && questionsReady && !firstQuestionReadyTracked) {
+    firstQuestionReadyTracked = true;
+    recordTelemetry('flow', 'question_ready', 'ok');
+  }
   replaceAppUrl(location.pathname + location.search);
   render();
 }
@@ -449,6 +516,9 @@ async function request(path, options = {}) {
   // requests we send the same signed payload inside the HTTPS JSON body; the
   // server verifies it exactly as it verifies the header value.
   const { maxIdentityInBody = false, timeoutMs = 15000, ...fetchOptions } = options;
+  const startedAt = performance.now();
+  const apiStage = telemetryApiStage(path, String(fetchOptions.method || 'GET').toUpperCase());
+  let telemetryResult = 'error', telemetryStatus = null;
   const initData = maxInitDataHeader();
   let body = fetchOptions.body;
   if (maxIdentityInBody && initData) {
@@ -460,6 +530,7 @@ async function request(path, options = {}) {
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(path, { ...fetchOptions, body, signal: controller.signal, headers: { 'Content-Type': 'application/json', ...(state.memberToken ? { Authorization: `Bearer ${state.memberToken}` } : {}), ...(!maxIdentityInBody && initData ? { 'X-MAX-Init-Data': initData } : {}), ...(fetchOptions.headers || {}) } });
+    telemetryStatus = response.status;
     const data = await response.json();
     if (!response.ok) {
       const detail = data.diagnosticError;
@@ -469,13 +540,19 @@ async function request(path, options = {}) {
       const reference = typeof data.diagnosticId === 'string' ? ` · ref ${data.diagnosticId}` : '';
       throw new Error(`${data.error || 'Не удалось выполнить действие'}${diagnostic}${reference}`);
     }
+    telemetryResult = 'ok';
     return data;
+  } catch (error) {
+    telemetryResult = error?.name === 'AbortError' ? 'timeout' : 'error';
+    throw error;
   } finally {
     window.clearTimeout(timeout);
+    if (apiStage) recordTelemetry('api', apiStage, telemetryResult, performance.now() - startedAt, telemetryStatus);
   }
 }
 async function restoreMaxMember() {
-  if (!maxInitData()) return false;
+  const startedAt = performance.now();
+  if (!maxInitData()) { recordTelemetry('startup', 'max_restore', 'skipped'); return false; }
   try {
     // A slow MAX restore must not leave both participants on the splash screen.
     // Their accepted pair is already saved locally; restore is a convenience
@@ -487,9 +564,11 @@ async function restoreMaxMember() {
     state.introAccepted = true;
     state.rulesSeen = true;
     updatePair(result.pair);
+    recordTelemetry('startup', 'max_restore', 'ok', performance.now() - startedAt);
     return true;
   } catch (error) {
     // A regular browser has no MAX identity; it remains usable for local testing.
+    recordTelemetry('startup', 'max_restore', error?.name === 'AbortError' ? 'timeout' : 'error', performance.now() - startedAt);
     return false;
   }
 }
@@ -515,8 +594,9 @@ async function createCircle() {
     const id = crypto.randomUUID?.() || `link-${Date.now()}`;
     const result = await request('/api/pairs', { method: 'POST', maxIdentityInBody: true, body: JSON.stringify({ id, member: state.profile, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
     state.memberToken = result.memberToken; state.invitationToken = result.invitationToken; updatePair(result.pair);
+    recordTelemetry('flow', 'pair_create', 'ok');
     go('invite-ready');
-  } catch (error) { toast(error.message || 'Не удалось создать приглашение. Нажмите «Понятно» ещё раз.'); }
+  } catch (error) { recordTelemetry('flow', 'pair_create', 'error'); toast(error.message || 'Не удалось создать приглашение. Нажмите «Понятно» ещё раз.'); }
   finally { creatingCircle = false; }
 }
 function parseInvite() {
@@ -535,8 +615,9 @@ async function acceptInvite(name, role) {
   try {
     const result = await request(`/api/pairs/${encodeURIComponent(source.id)}/accept`, { method: 'POST', maxIdentityInBody: true, body: JSON.stringify({ member: me, invitationToken: source.token }) });
     state.profile = me; state.memberToken = result.memberToken; updatePair(result.pair); incomingInvite = null;
+    recordTelemetry('flow', 'pair_accept', 'ok');
     replaceAppUrl(location.pathname); go('connected');
-  } catch (error) { toast(error.message); }
+  } catch (error) { recordTelemetry('flow', 'pair_accept', 'error'); toast(error.message); }
 }
 async function share(url) {
   shareDialog = url;
@@ -632,7 +713,7 @@ async function action(button) {
   }
   if (type === 'retry-start') { void start(); return; }
   if (type === 'go') { go(button.dataset.screen); return; }
-  if (type === 'accept-intro') { state.introAccepted = true; save(); go('how-it-works'); return; }
+  if (type === 'accept-intro') { recordTelemetry('flow', 'onboarding', 'ok'); state.introAccepted = true; save(); go('how-it-works'); return; }
   if (type === 'finish-rules') { state.rulesSeen = true; save(); go('name'); return; }
   if (type === 'create-circle') { await createCircle(); return; }
   if (type === 'accept-invite') { await acceptInvite(state.profile.name, state.profile.role); return; }
@@ -646,9 +727,10 @@ async function action(button) {
     if (!prompt) return;
     try {
       updatePair(await request(`/api/pairs/${pair.id}/marks`, { method: 'POST', body: JSON.stringify({ day: prompt.day }) }));
+      recordTelemetry('flow', 'question_mark', 'ok');
       conversationDialog = null;
       go('after-mark');
-    } catch (error) { toast(error.message); }
+    } catch (error) { recordTelemetry('flow', 'question_mark', 'error'); toast(error.message); }
     return;
   }
   if (type === 'conversation-not-yet') { conversationDialog.stage = 'not-yet'; render(); return; }
@@ -707,8 +789,8 @@ async function action(button) {
     return;
   }
   if (type === 'confirm-reset') {
-    try { if (pair) await request(`/api/pairs/${pair.id}/members/${state.profile.id}`, { method: 'DELETE' }); }
-    catch (error) { toast(error.message); return; }
+    try { if (pair) await request(`/api/pairs/${pair.id}/members/${state.profile.id}`, { method: 'DELETE' }); recordTelemetry('flow', 'pair_delete', 'ok'); }
+    catch (error) { recordTelemetry('flow', 'pair_delete', 'error'); toast(error.message); return; }
     localStorage.removeItem(STORE);
     try { sessionStorage.removeItem('delis-active-store'); } catch { /* Private browsing can restrict session storage. */ }
     state = { profile: null, circles: [], activeCircleId: null, diary: [], marks: {}, introAccepted: false, rulesSeen: false, memberToken: null, invitationToken: null };
@@ -738,6 +820,7 @@ $('#app').addEventListener('submit', (event) => {
 });
 
 async function loadQuestions() {
+  const startedAt = performance.now();
   try {
     const response = await fetch('./%D0%91%D1%83%D0%B4%D0%B5%D0%BC%20%D0%B1%D0%BB%D0%B8%D0%B6%D0%B5%20%D0%B2%D0%BE%D0%BF%D1%80%D0%BE%D1%81%D1%8B.md');
     if (!response.ok) throw new Error('question deck unavailable');
@@ -752,14 +835,20 @@ async function loadQuestions() {
         throw new Error('invalid question plan');
     }
     questionsReady = true;
-  } catch { questionsReady = false; }
+    recordTelemetry('startup', 'questions', 'ok', performance.now() - startedAt);
+  } catch {
+    questionsReady = false;
+    recordTelemetry('startup', 'questions', 'error', performance.now() - startedAt);
+  }
   if (screen === 'home') go('home');
 }
 async function start() {
   const run = ++startupRun;
-  const startedAt = Date.now();
+  const startedAt = performance.now();
+  recordTelemetry('startup', 'app_boot', 'ok', 0);
   let fallbackScreen = null;
   incomingInvite = parseInvite();
+  if (incomingInvite) recordTelemetry('flow', 'invite_open', 'ok');
   inviteStartupError = false;
   render();
   const splashTimeout = window.setTimeout(() => {
@@ -768,11 +857,16 @@ async function start() {
     go(fallbackScreen);
   }, SPLASH_DURATION);
   const restore = restoreMaxMember();
+  const configStartedAt = performance.now();
   const config = request('/api/config', { timeoutMs: 4000 });
   try {
     const publicConfig = await config;
     if (typeof publicConfig.maxBotName === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(publicConfig.maxBotName)) maxBotName = publicConfig.maxBotName;
-  } catch { /* The documented public bot name remains a safe fallback. */ }
+    recordTelemetry('startup', 'config', 'ok', performance.now() - configStartedAt);
+  } catch (error) {
+    recordTelemetry('startup', 'config', error?.name === 'AbortError' ? 'timeout' : 'error', performance.now() - configStartedAt);
+    /* The documented public bot name remains a safe fallback. */
+  }
   let inviteRole = null;
   if (incomingInvite && !circle()) {
     inviteRole = request(`/api/pairs/${encodeURIComponent(incomingInvite.id)}/invite-role`, {
@@ -786,18 +880,19 @@ async function start() {
       state.profile ||= { id: `member-${Date.now()}`, name: '', role: '' };
       state.profile.role = invite.role;
       save();
-    } catch { inviteStartupError = true; }
+      recordTelemetry('startup', 'invite_role', 'ok');
+    } catch (error) { inviteStartupError = true; recordTelemetry('startup', 'invite_role', error?.name === 'AbortError' ? 'timeout' : 'error'); }
   }
   if (run !== startupRun) return;
   const next = startupScreen();
   if (screen === 'splash') {
     window.clearTimeout(splashTimeout);
-    window.setTimeout(() => { if (run === startupRun) go(next); }, Math.max(0, SPLASH_DURATION - (Date.now() - startedAt)));
+    window.setTimeout(() => { if (run === startupRun) { go(next); recordTelemetry('startup', 'ready', 'ok', performance.now() - startedAt); void flushTelemetry(); } }, Math.max(0, SPLASH_DURATION - (performance.now() - startedAt)));
   } else if (screen === 'invite-checking') {
     if (inviteStartupError) render();
-    else go(next);
+    else { go(next); recordTelemetry('startup', 'ready', 'ok', performance.now() - startedAt); void flushTelemetry(); }
   } else if (fallbackScreen && screen === fallbackScreen && !inviteStartupError) {
-    go(next);
+    go(next); recordTelemetry('startup', 'ready', 'ok', performance.now() - startedAt); void flushTelemetry();
   }
 }
 function startupScreen() {
