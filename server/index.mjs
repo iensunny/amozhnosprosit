@@ -165,7 +165,9 @@ function authorizedForMonitoring(request) {
 
 function requireMonitoringAuth(response) {
   response.writeHead(401, {
-    "WWW-Authenticate": 'Basic realm="А можно спросить? Мониторинг", charset="UTF-8"',
+    // HTTP header values must be ASCII/Latin-1; Cyrillic here makes Node throw
+    // ERR_INVALID_CHAR and turns the expected 401 challenge into a 500.
+    "WWW-Authenticate": 'Basic realm="Service monitoring", charset="UTF-8"',
     "Cache-Control": "no-store",
     "Content-Type": "text/plain; charset=utf-8",
     "X-Content-Type-Options": "nosniff"
