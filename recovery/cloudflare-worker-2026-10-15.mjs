@@ -5,6 +5,15 @@ var __name = (target, value) => __defProp(target, "name", { value, configurable:
 var inviteLifetimeMs = 7 * 24 * 60 * 60 * 1e3;
 var maxInitDataLifetimeMs = 60 * 60 * 1e3;
 var dailyNotificationHour = 10;
+var telemetryStages = {
+  startup: new Set(["document_ttfb", "document_load", "css", "js", "app_boot", "config", "max_restore", "invite_role", "questions", "ready"]),
+  api: new Set(["config", "max_restore", "pairs_create", "pair_get", "invite_refresh", "invite_role", "accept", "question", "marks", "member_update", "pair_delete"]),
+  flow: new Set(["onboarding", "pair_create", "invite_open", "pair_accept", "question_ready", "question_mark"]),
+  notification: new Set(["send_daily", "save_state"])
+};
+var telemetryResults = new Set(["ok", "error", "timeout", "skipped", "accepted"]);
+var telemetryWindowStartedAt = Date.now();
+var telemetryEventsInWindow = 0;
 var validId = /* @__PURE__ */ __name((value) => typeof value === "string" && /^[A-Za-z0-9-]{8,100}$/.test(value), "validId");
 var validMember = /* @__PURE__ */ __name((value) => value && validId(value.id) && typeof value.name === "string" && value.name.trim().length > 0 && value.name.trim().length <= 40 && ["child", "adult"].includes(value.role), "validMember");
 function json(body, status = 200) {
@@ -156,6 +165,121 @@ async function writeDiagnostic(db, event) {
   }
 }
 __name(writeDiagnostic, "writeDiagnostic");
+async function writeTelemetry(db, event) {
+  try {
+    await db.prepare("INSERT INTO telemetry_events (id, created_at, event_name, stage, result, duration_ms, http_status, app_version, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(event.id, event.createdAt, event.eventName, event.stage, event.result, event.durationMs, event.httpStatus, event.appVersion, event.platform)
+      .run();
+    return true;
+  } catch (error) {
+    console.error("Could not persist telemetry event", {
+      eventName: event.eventName,
+      stage: event.stage,
+      errorType: error?.name || "Error",
+      errorCode: Number.isInteger(error?.code) ? error.code : ""
+    });
+    return false;
+  }
+}
+__name(writeTelemetry, "writeTelemetry");
+async function acceptTelemetryBatch(db, request) {
+  let input;
+  try {
+    input = await bodyOf(request);
+  } catch {
+    return json({ error: "Invalid telemetry payload" }, 400);
+  }
+  if (!Array.isArray(input.events) || input.events.length < 1 || input.events.length > 20) return json({ error: "Invalid telemetry payload" }, 400);
+  const now = Date.now();
+  if (now - telemetryWindowStartedAt >= 60_000) {
+    telemetryWindowStartedAt = now;
+    telemetryEventsInWindow = 0;
+  }
+  if (telemetryEventsInWindow + input.events.length > 60) return json({ error: "Telemetry rate limit reached" }, 429);
+  const platform = input.platform === "max" || input.platform === "browser" ? input.platform : null;
+  const appVersion = typeof input.appVersion === "string" && /^[A-Za-z0-9._-]{1,24}$/.test(input.appVersion) ? input.appVersion : null;
+  const events = [];
+  for (const item of input.events) {
+    if (!item || !telemetryStages[item.eventName]?.has(item.stage) || !telemetryResults.has(item.result))
+      return json({ error: "Invalid telemetry payload" }, 400);
+    const durationMs = item.durationMs === null ? null : Number.isInteger(item.durationMs) && item.durationMs >= 0 && item.durationMs <= 120000 ? item.durationMs : null;
+    if (item.durationMs !== null && durationMs === null) return json({ error: "Invalid telemetry payload" }, 400);
+    const httpStatus = item.httpStatus === null ? null : Number.isInteger(item.httpStatus) && item.httpStatus >= 100 && item.httpStatus <= 599 ? item.httpStatus : null;
+    if (item.httpStatus !== null && httpStatus === null) return json({ error: "Invalid telemetry payload" }, 400);
+    events.push({
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      eventName: item.eventName,
+      stage: item.stage,
+      result: item.result,
+      durationMs,
+      httpStatus,
+      appVersion,
+      platform
+    });
+  }
+  telemetryEventsInWindow += events.length;
+  try {
+    await db.batch(events.map((event) => db.prepare("INSERT INTO telemetry_events (id, created_at, event_name, stage, result, duration_ms, http_status, app_version, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(event.id, event.createdAt, event.eventName, event.stage, event.result, event.durationMs, event.httpStatus, event.appVersion, event.platform)));
+    return new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    console.error("Could not persist telemetry batch", { errorType: error?.name || "Error", errorCode: Number.isInteger(error?.code) ? error.code : "" });
+    return json({ error: "Telemetry unavailable" }, 503);
+  }
+}
+__name(acceptTelemetryBatch, "acceptTelemetryBatch");
+async function handleBotStarted(request, env) {
+  if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+  const suppliedSecret = new TextEncoder().encode(request.headers.get("X-Max-Bot-Api-Secret") || "");
+  const expectedSecret = new TextEncoder().encode(env.MAX_WEBHOOK_SECRET || "");
+  if (!expectedSecret.length || !timingSafeEqual(suppliedSecret, expectedSecret)) return json({ error: "Unauthorized" }, 401);
+  if (env.BOT_WELCOME_ENABLED === false) return json({ error: "Welcome service unavailable" }, 503);
+  let update;
+  try { update = await bodyOf(request); }
+  catch { return json({ error: "Invalid webhook payload" }, 400); }
+  if (update?.update_type !== "bot_started") return json({ success: true, ignored: true });
+  const rawUserId = update.user?.user_id ?? update.user?.id;
+  const userId = typeof rawUserId === "number" && Number.isSafeInteger(rawUserId) && rawUserId > 0
+    ? String(rawUserId)
+    : typeof rawUserId === "string" && /^\d{1,128}$/.test(rawUserId) ? rawUserId : null;
+  if (!userId) return json({ error: "Missing MAX user id" }, 400);
+
+  const now = new Date().toISOString();
+  try {
+    const inserted = await env.DB.prepare("INSERT OR IGNORE INTO bot_welcomes (max_user_id, status, updated_at) VALUES (?, 'processing', ?)").bind(userId, now).run();
+    let claimed = Number(inserted?.meta?.changes || 0) > 0;
+    if (!claimed) {
+      const previous = await env.DB.prepare("SELECT status, updated_at FROM bot_welcomes WHERE max_user_id = ?").bind(userId).first();
+      if (previous?.status === "sent") return json({ success: true, alreadyWelcomed: true });
+      const retryFailed = previous?.status === "failed";
+      const staleProcessing = previous?.status === "processing" && Date.parse(previous.updated_at || "") < Date.now() - 2 * 60 * 1000;
+      if (retryFailed || staleProcessing) {
+        const oldStatus = retryFailed ? "failed" : "processing";
+        const updateQuery = staleProcessing
+          ? "UPDATE bot_welcomes SET status = 'processing', updated_at = ? WHERE max_user_id = ? AND status = 'processing' AND updated_at = ?"
+          : "UPDATE bot_welcomes SET status = 'processing', updated_at = ? WHERE max_user_id = ? AND status = ?";
+        const values = staleProcessing ? [now, userId, previous.updated_at] : [now, userId, oldStatus];
+        const acquired = await env.DB.prepare(updateQuery).bind(...values).run();
+        claimed = Number(acquired?.meta?.changes || 0) > 0;
+      }
+      if (!claimed) return json({ success: true, alreadyWelcomed: true });
+    }
+    try {
+      await sendWelcomeMessage(env, userId);
+      await env.DB.prepare("UPDATE bot_welcomes SET status = 'sent', updated_at = ? WHERE max_user_id = ?").bind(new Date().toISOString(), userId).run();
+      return json({ success: true });
+    } catch (error) {
+      await env.DB.prepare("UPDATE bot_welcomes SET status = 'failed', updated_at = ? WHERE max_user_id = ?").bind(new Date().toISOString(), userId).run();
+      console.error("MAX welcome message failed", { errorType: error?.name || "Error", errorCode: Number.isInteger(error?.code) ? error.code : "" });
+      return json({ error: "Welcome message failed" }, 503);
+    }
+  } catch (error) {
+    console.error("MAX welcome event failed", { errorType: error?.name || "Error", errorCode: Number.isInteger(error?.code) ? error.code : "" });
+    return json({ error: "Welcome event unavailable" }, 503);
+  }
+}
+__name(handleBotStarted, "handleBotStarted");
 function insertMember(db, member, pairId, position, tokenHash, maxUserId) {
   if (maxUserId) {
     return db.prepare("INSERT INTO members (id, pair_id, name, role, position, token_hash, max_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
@@ -214,6 +338,10 @@ async function api(request, env, pathname) {
   const db = env.DB;
   let diagnosticStage = "route";
   try {
+    if (pathname === "/api/telemetry" && request.method === "POST") {
+      if (env.TELEMETRY_ENABLED === false) return json({ error: "Telemetry unavailable" }, 503);
+      return acceptTelemetryBatch(db, request);
+    }
     if (pathname === "/api/health" && request.method === "GET") return json({ ok: true });
     if (pathname === "/api/config" && request.method === "GET") return json({ maxBotName: env.MAX_BOT_NAME || "se14681938_bot" });
     if (pathname === "/api/max/restore" && request.method === "POST") {
@@ -421,6 +549,27 @@ async function sendMaxMessage(env, userId, text) {
   if (!response.ok) throw new Error(`MAX message failed: ${response.status}`);
 }
 __name(sendMaxMessage, "sendMaxMessage");
+async function sendWelcomeMessage(env, userId) {
+  if (!env.MAX_BOT_TOKEN) throw new Error("MAX bot token is not configured");
+  const text = "🌿 **Привет! Добро пожаловать в «А можно спросить?»**\n\nЭто приложение для родителей и подростков. Один вопрос в день помогает узнать друг друга с новой стороны и начать разговор о том, на что часто не хватает времени или слов.\n\n**Как начать**\n\n1. Нажмите кнопку ниже.\n2. Создайте пару или примите приглашение близкого человека.\n3. Найдите вопрос дня и обсудите его, когда вам обоим удобно.\n\nЗдесь нет правильных ответов и оценок. Можно делиться мыслями лично, в разговоре. Приложение не хранит ваши ответы.\n\nНеобязательно отвечать сразу или говорить о том, к чему вы пока не готовы. Начните с того, что комфортно вам обоим.";
+  const response = await fetch(`https://platform-api2.max.ru/messages?user_id=${encodeURIComponent(userId)}`, {
+    method: "POST",
+    headers: { Authorization: env.MAX_BOT_TOKEN, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      format: "markdown",
+      notify: true,
+      attachments: [{ type: "inline_keyboard", payload: { buttons: [[{
+        type: "link",
+        text: "Открыть приложение",
+        url: `https://max.ru/${env.MAX_BOT_NAME || "se14681938_bot"}?startapp`
+      }]] } }]
+    }),
+    signal: AbortSignal.timeout(10000)
+  });
+  if (!response.ok) throw new Error(`MAX message failed: ${response.status}`);
+}
+__name(sendWelcomeMessage, "sendWelcomeMessage");
 async function sendDailyNotifications(env) {
   const pairs = await env.DB.prepare("SELECT id, started_at, time_zone FROM pairs WHERE status = 'active'").all();
   for (const pair of pairs.results) {
@@ -432,9 +581,17 @@ async function sendDailyNotifications(env) {
     if (alreadySent) continue;
     try {
       await sendMaxMessage(env, member.max_user_id, "\u0421\u0435\u0433\u043E\u0434\u043D\u044F \u0432\u0430\u0448 \u0445\u043E\u0434 \u2014 \u043E\u0442\u043A\u0440\u043E\u0439\u0442\u0435 \xAB\u0414\u0435\u043B\u0438\u0441\u044C\xBB \u0438 \u0437\u0430\u0434\u0430\u0439\u0442\u0435 \u0432\u043E\u043F\u0440\u043E\u0441 \u0431\u043B\u0438\u0437\u043A\u043E\u043C\u0443.");
+    } catch (error) {
+      console.error("Daily MAX notification failed", { errorType: error?.name || "Error", errorCode: Number.isInteger(error?.code) ? error.code : "" });
+      if (env.TELEMETRY_ENABLED !== false) await writeTelemetry(env.DB, { id: crypto.randomUUID(), createdAt: new Date().toISOString(), eventName: "notification", stage: "send_daily", result: "error", durationMs: null, httpStatus: null, appVersion: null, platform: null });
+      continue;
+    }
+    if (env.TELEMETRY_ENABLED !== false) await writeTelemetry(env.DB, { id: crypto.randomUUID(), createdAt: new Date().toISOString(), eventName: "notification", stage: "send_daily", result: "accepted", durationMs: null, httpStatus: null, appVersion: null, platform: null });
+    try {
       await env.DB.prepare("INSERT OR IGNORE INTO daily_notifications (pair_id, day, member_id, sent_at) VALUES (?, ?, ?, ?)").bind(pair.id, day, member.id, (/* @__PURE__ */ new Date()).toISOString()).run();
     } catch (error) {
-      console.error("Daily MAX notification failed", { pairId: pair.id, memberId: member.id, message: error?.message });
+      console.error("Could not save MAX notification state", { errorType: error?.name || "Error", errorCode: Number.isInteger(error?.code) ? error.code : "" });
+      if (env.TELEMETRY_ENABLED !== false) await writeTelemetry(env.DB, { id: crypto.randomUUID(), createdAt: new Date().toISOString(), eventName: "notification", stage: "save_state", result: "error", durationMs: null, httpStatus: null, appVersion: null, platform: null });
     }
   }
 }
@@ -442,6 +599,7 @@ __name(sendDailyNotifications, "sendDailyNotifications");
 var worker_default = {
   async fetch(request, env) {
     const pathname = new URL(request.url).pathname;
+    if (pathname === "/api/max/webhook") return handleBotStarted(request, env);
     if (pathname.startsWith("/api/")) return api(request, env, pathname);
     const response = await env.ASSETS.fetch(request);
     const headers = new Headers(response.headers);

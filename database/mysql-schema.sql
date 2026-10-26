@@ -80,3 +80,26 @@ CREATE TABLE diagnostic_events (
   message VARCHAR(255) NOT NULL,
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE telemetry_events (
+  id CHAR(36) NOT NULL,
+  created_at VARCHAR(32) NOT NULL,
+  event_name VARCHAR(24) NOT NULL,
+  stage VARCHAR(32) NOT NULL,
+  result VARCHAR(16) NOT NULL,
+  duration_ms INT UNSIGNED NULL,
+  http_status SMALLINT UNSIGNED NULL,
+  app_version VARCHAR(24) NULL,
+  platform VARCHAR(16) NULL,
+  PRIMARY KEY (id),
+  KEY telemetry_created_at (created_at),
+  KEY telemetry_summary (event_name, stage, result, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE bot_welcomes (
+  max_user_id VARCHAR(128) NOT NULL,
+  status VARCHAR(16) NOT NULL,
+  updated_at VARCHAR(32) NOT NULL,
+  PRIMARY KEY (max_user_id),
+  KEY bot_welcomes_updated_at (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
