@@ -1,0 +1,74 @@
+name: Deploy to Sprintbox
+
+on:
+  push:
+    branches:
+      - codex/sprintbox-sqlite
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sprintbox-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/codex/sprintbox-sqlite'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out application
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install and test
+        run: |
+          npm ci
+          npm test
+
+      - name: Package tracked application files
+        run: git archive --format=tar HEAD | gzip -1 > app.tar.gz
+
+      - name: Configure verified SSH access
+        env:
+          SPRINTBOX_SSH_KEY: ${{ secrets.SPRINTBOX_SSH_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SPRINTBOX_SSH_KEY" > ~/.ssh/sprintbox_key
+          chmod 600 ~/.ssh/sprintbox_key
+          printf '%s\n' '85.235.205.153 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBKcVXJ+2Eq1/5nSowRGKCYYDhLKY04bwPYlUMTZtv+GaXJHjdventL8aL9Wsa0WTMWjFg8YFXPk3MTezF3kEBzc=' > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Upload and restart Sprintbox service
+        env:
+          SPRINTBOX_HOST: 85.235.205.153
+          SPRINTBOX_USER: amozhnosprosit-deploy
+        run: |
+          release_archive="/tmp/amozhnosprosit-${GITHUB_SHA}.tar.gz"
+          scp -i ~/.ssh/sprintbox_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes app.tar.gz "$SPRINTBOX_USER@$SPRINTBOX_HOST:$release_archive"
+          ssh -i ~/.ssh/sprintbox_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$SPRINTBOX_USER@$SPRINTBOX_HOST" "DEPLOY_ARCHIVE='$release_archive' bash -s" <<'REMOTE'
+          set -euo pipefail
+          tar --no-same-owner -xzf "$DEPLOY_ARCHIVE" -C /opt/amozhnosprosit
+          cd /opt/amozhnosprosit
+          npm ci --omit=dev
+          sudo -n /usr/bin/systemctl restart amozhnosprosit
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --max-time 3 http://127.0.0.1:8080/api/health >/dev/null; then
+              sudo -n /usr/bin/systemctl is-active amozhnosprosit
+              rm -f "$DEPLOY_ARCHIVE"
+              exit 0
+            fi
+            sleep 2
+          done
+          sudo -n /usr/bin/systemctl status amozhnosprosit --no-pager || true
+          exit 1
+          REMOTE
+
+      - name: Verify public HTTPS endpoint
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 4 --retry-all-errors --max-time 15 https://amozhnosprosit.365ksebe.ru/api/health
