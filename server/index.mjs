@@ -1,5 +1,5 @@
 import { createReadStream, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, extname, join, normalize, resolve } from "node:path";
@@ -8,6 +8,7 @@ import cron from "node-cron";
 import Database from "better-sqlite3";
 import worker from "../recovery/cloudflare-worker-2026-10-15.mjs";
 import { D1SqliteAdapter } from "./d1-sqlite-adapter.mjs";
+import { createMonitoringAuth } from "./monitoring-auth.mjs";
 
 const root = resolve("public");
 const mime = {
@@ -65,7 +66,8 @@ for (const variable of required) {
   if (!process.env[variable]) throw new Error(`Missing required environment variable: ${variable}`);
 }
 
-const statusPasswordHash = process.env.STATUS_DASHBOARD_PASSWORD_SHA256 || "7eba24edbe0db6d9b02444dfee688662434e57922426e51840ed7194ed066e0a";
+const statusPasswordConfigured = /^[a-f0-9]{64}$/i.test(process.env.STATUS_DASHBOARD_PASSWORD_SHA256 || "");
+const monitoringAuth = createMonitoringAuth(process.env.STATUS_DASHBOARD_PASSWORD_SHA256);
 const webhookSecret = createHmac("sha256", process.env.MAX_BOT_TOKEN).update("amozhnosprosit:max-webhook:v1").digest("hex");
 const publicAppOrigin = (process.env.PUBLIC_APP_URL || "https://79-174-82-103.regru.cloud").replace(/\/$/, "");
 const maxWebhookSetupEnabled = process.env.MAX_WEBHOOK_SETUP_ENABLED !== "false";
@@ -105,30 +107,50 @@ const env = {
   TELEMETRY_ENABLED: telemetryReady
 };
 
-function authorizedForMonitoring(request) {
-  const authorization = request.headers.authorization || "";
-  const match = /^Basic\s+([A-Za-z0-9+/]+=*)$/i.exec(authorization);
-  if (!match) return false;
-  let decoded;
-  try { decoded = Buffer.from(match[1], "base64").toString("utf8"); }
-  catch { return false; }
-  const divider = decoded.indexOf(":");
-  if (divider < 0 || decoded.slice(0, divider) !== "owner") return false;
-  const suppliedHash = createHash("sha256").update(decoded.slice(divider + 1)).digest();
-  const expectedHash = Buffer.from(statusPasswordHash, "hex");
-  return suppliedHash.length === expectedHash.length && timingSafeEqual(suppliedHash, expectedHash);
-}
-
 function requireMonitoringAuth(response) {
   response.writeHead(401, {
-    // HTTP header values must be ASCII/Latin-1; Cyrillic here makes Node throw
-    // ERR_INVALID_CHAR and turns the expected 401 challenge into a 500.
-    "WWW-Authenticate": 'Basic realm="Service monitoring", charset="UTF-8"',
     "Cache-Control": "no-store",
-    "Content-Type": "text/plain; charset=utf-8",
+    "Content-Type": "application/json; charset=utf-8",
     "X-Content-Type-Options": "nosniff"
   });
-  response.end("Требуется пароль для просмотра мониторинга.");
+  response.end(JSON.stringify({ error: "Требуется вход", loginRequired: true }));
+}
+
+async function handleMonitoringLogin(request, response) {
+  if (request.method !== "POST") {
+    response.writeHead(405, { "Allow": "POST", "Cache-Control": "no-store" });
+    response.end();
+    return true;
+  }
+  let body = "";
+  for await (const chunk of request) {
+    body += chunk.toString("utf8");
+    if (body.length > 2048) {
+      response.writeHead(413, { "Cache-Control": "no-store" });
+      response.end();
+      return true;
+    }
+  }
+  const password = new URLSearchParams(body).get("password") || "";
+  const valid = monitoringAuth.verifyPassword(password);
+  if (!valid) {
+    response.writeHead(statusPasswordConfigured ? 401 : 503, {
+      "Cache-Control": "no-store",
+      "Content-Type": "application/json; charset=utf-8",
+      "X-Content-Type-Options": "nosniff"
+    });
+    response.end(JSON.stringify({ error: statusPasswordConfigured ? "Пароль не подошёл" : "Вход не настроен" }));
+    return true;
+  }
+  const token = monitoringAuth.createSession();
+  response.writeHead(200, {
+    "Set-Cookie": monitoringAuth.cookie(token),
+    "Cache-Control": "no-store",
+    "Content-Type": "application/json; charset=utf-8",
+    "X-Content-Type-Options": "nosniff"
+  });
+  response.end(JSON.stringify({ ok: true }));
+  return true;
 }
 
 async function monitoringSnapshot() {
@@ -174,19 +196,21 @@ async function monitoringSnapshot() {
 
 async function handleMonitoringRequest(request, response) {
   const pathname = new URL(request.url || "/", "http://localhost").pathname;
+  if (pathname === "/api/admin/login") return handleMonitoringLogin(request, response);
   if (pathname !== "/admin/monitoring" && pathname !== "/api/admin/monitoring") return false;
   if (request.method !== "GET") {
     response.writeHead(405, { "Allow": "GET", "Cache-Control": "no-store" });
     response.end();
     return true;
   }
-  if (!authorizedForMonitoring(request)) {
-    requireMonitoringAuth(response);
+  if (pathname === "/admin/monitoring") {
+    const pageName = monitoringAuth.hasSession(request.headers.cookie || "") ? "monitoring.html" : "monitoring-login.html";
+    const page = await staticFetch(new Request(`http://localhost/${pageName}`));
+    await sendNodeResponse(page, response);
     return true;
   }
-  if (pathname === "/admin/monitoring") {
-    const page = await staticFetch(new Request(`http://localhost/monitoring.html`));
-    await sendNodeResponse(page, response);
+  if (!monitoringAuth.hasSession(request.headers.cookie || "")) {
+    requireMonitoringAuth(response);
     return true;
   }
   try {
