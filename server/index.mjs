@@ -69,7 +69,17 @@ for (const variable of required) {
 const statusPasswordConfigured = /^[a-f0-9]{64}$/i.test(process.env.STATUS_DASHBOARD_PASSWORD_SHA256 || "");
 const monitoringAuth = createMonitoringAuth(process.env.STATUS_DASHBOARD_PASSWORD_SHA256);
 const webhookSecret = createHmac("sha256", process.env.MAX_BOT_TOKEN).update("amozhnosprosit:max-webhook:v1").digest("hex");
-const publicAppOrigin = (process.env.PUBLIC_APP_URL || "https://79-174-82-103.regru.cloud").replace(/\/$/, "");
+const productionAppOrigin = "https://amozhnosprosit.365ksebe.ru";
+const configuredAppOrigin = (process.env.PUBLIC_APP_URL || "").replace(/\/$/, "");
+const publicAppOrigin = (() => {
+  try {
+    return configuredAppOrigin && new URL(configuredAppOrigin).hostname === new URL(productionAppOrigin).hostname
+      ? configuredAppOrigin
+      : productionAppOrigin;
+  } catch {
+    return productionAppOrigin;
+  }
+})();
 const maxWebhookSetupEnabled = process.env.MAX_WEBHOOK_SETUP_ENABLED !== "false";
 const scheduledJobsEnabled = process.env.ENABLE_SCHEDULED_JOBS !== "false";
 
