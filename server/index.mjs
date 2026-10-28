@@ -81,6 +81,10 @@ const publicAppOrigin = (() => {
   }
 })();
 const maxWebhookSetupEnabled = process.env.MAX_WEBHOOK_SETUP_ENABLED !== "false";
+let maxWelcomeWebhookStatus = maxWebhookSetupEnabled ? "configuring" : "disabled";
+let maxWelcomeWebhookError = null;
+let maxWelcomeWebhookLastEventAt = null;
+let maxWelcomeWebhookLastHttpStatus = null;
 const scheduledJobsEnabled = process.env.ENABLE_SCHEDULED_JOBS !== "false";
 
 const databasePath = resolve(process.env.SQLITE_PATH || "data/amozhnosprosit.sqlite");
@@ -236,8 +240,24 @@ async function handleMonitoringRequest(request, response) {
 
 const server = createServer(async (request, response) => {
   try {
+    if (new URL(request.url || "/", "http://localhost").pathname === "/api/health") {
+      response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+      response.end(JSON.stringify({
+        ok: true,
+        welcomeWebhook: maxWelcomeWebhookStatus,
+        welcomeWebhookLastEventAt: maxWelcomeWebhookLastEventAt,
+        welcomeWebhookLastHttpStatus: maxWelcomeWebhookLastHttpStatus,
+        ...(maxWelcomeWebhookError ? { welcomeWebhookError: maxWelcomeWebhookError } : {})
+      }));
+      return;
+    }
     if (await handleMonitoringRequest(request, response)) return;
-    await sendNodeResponse(await worker.fetch(requestFromNode(request), env), response);
+    const workerResponse = await worker.fetch(requestFromNode(request), env);
+    if (new URL(request.url || "/", "http://localhost").pathname === "/api/max/webhook") {
+      maxWelcomeWebhookLastEventAt = new Date().toISOString();
+      maxWelcomeWebhookLastHttpStatus = workerResponse.status;
+    }
+    await sendNodeResponse(workerResponse, response);
   } catch (error) {
     console.error("Request failed", error);
     response.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
@@ -246,6 +266,8 @@ const server = createServer(async (request, response) => {
 });
 
 async function ensureMaxWelcomeSubscription() {
+  maxWelcomeWebhookStatus = "configuring";
+  maxWelcomeWebhookError = null;
   if (!welcomeTableReady) {
     console.error("MAX webhook setup skipped because welcome storage is unavailable");
     return;
@@ -256,7 +278,11 @@ async function ensureMaxWelcomeSubscription() {
       headers: { Authorization: process.env.MAX_BOT_TOKEN },
       signal: AbortSignal.timeout(10000)
     });
-    if (!existingResponse.ok) throw new Error(`MAX subscriptions GET failed: ${existingResponse.status}`);
+    if (!existingResponse.ok) {
+      maxWelcomeWebhookStatus = "failed";
+      maxWelcomeWebhookError = `subscriptions_get_http_${existingResponse.status}`;
+      throw new Error(`MAX subscriptions GET failed: ${existingResponse.status}`);
+    }
     const existingPayload = await existingResponse.json();
     const subscriptions = Array.isArray(existingPayload.subscriptions) ? existingPayload.subscriptions : [];
     const existing = subscriptions.find(item => item.url === url);
@@ -267,14 +293,25 @@ async function ensureMaxWelcomeSubscription() {
       body: JSON.stringify({ url, update_types: updateTypes, secret: webhookSecret }),
       signal: AbortSignal.timeout(10000)
     });
-    if (!response.ok) throw new Error(`MAX subscriptions POST failed: ${response.status}`);
+    if (!response.ok) {
+      maxWelcomeWebhookStatus = "failed";
+      maxWelcomeWebhookError = `subscriptions_post_http_${response.status}`;
+      throw new Error(`MAX subscriptions POST failed: ${response.status}`);
+    }
     const result = await response.json();
-    if (result.success === false) throw new Error("MAX rejected webhook subscription");
+    if (result.success === false) {
+      maxWelcomeWebhookStatus = "failed";
+      maxWelcomeWebhookError = "subscription_rejected";
+      throw new Error("MAX rejected webhook subscription");
+    }
     maxWelcomeWebhookConfigured = true;
+    maxWelcomeWebhookStatus = "configured";
     console.log("MAX bot_started webhook configured");
   } catch (error) {
     maxWelcomeWebhookConfigured = false;
-    console.error("MAX welcome webhook setup failed", error?.message || error?.name || "Error");
+    maxWelcomeWebhookStatus = "failed";
+    maxWelcomeWebhookError ||= error?.name === "TimeoutError" ? "max_timeout" : "subscription_network_error";
+    console.error("MAX welcome webhook setup failed", maxWelcomeWebhookError);
   }
 }
 

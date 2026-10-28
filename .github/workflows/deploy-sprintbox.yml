@@ -73,5 +73,20 @@ jobs:
           exit 1
           REMOTE
 
-      - name: Verify public HTTPS endpoint
-        run: curl --fail --silent --show-error --retry 5 --retry-delay 4 --retry-all-errors --max-time 15 https://amozhnosprosit.365ksebe.ru/api/health
+      - name: Verify public HTTPS endpoint and MAX webhook
+        shell: bash
+        run: |
+          health=''
+          for attempt in $(seq 1 20); do
+            health="$(curl --fail --silent --show-error --max-time 15 https://amozhnosprosit.365ksebe.ru/api/health || true)"
+            status="$(printf '%s' "$health" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).welcomeWebhook||"unknown")}catch{console.log("unknown")}})')"
+            printf 'Production health: %s\n' "$health"
+            if [ "$status" = "configured" ]; then exit 0; fi
+            if [ "$status" = "failed" ] || [ "$status" = "disabled" ]; then
+              echo "MAX welcome webhook is not ready."
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "Timed out waiting for MAX welcome webhook setup."
+          exit 1
