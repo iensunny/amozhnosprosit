@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>Вход в мониторинг</title>
+  <style>
+    :root { color-scheme: light; --ink: #18354d; --muted: #73808a; --paper: #f6f1e9; --card: #fffdf9; --line: #e8ded2; --terra: #b96345; --bad: #a43d35; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100svh; display: grid; place-items: center; padding: 20px; background: var(--paper); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, sans-serif; }
+    main { width: min(100%, 420px); padding: 28px; border: 1px solid var(--line); border-radius: 20px; background: var(--card); box-shadow: 0 12px 36px #18354d12; }
+    h1 { margin: 0; font: 600 28px/1.2 Georgia, serif; }
+    p { margin: 10px 0 22px; color: var(--muted); }
+    label { display: block; margin-bottom: 8px; font-weight: 600; }
+    input { width: 100%; min-height: 48px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); font: inherit; }
+    input:focus { outline: 3px solid #b9634540; border-color: var(--terra); }
+    button { width: 100%; min-height: 48px; margin-top: 14px; border: 0; border-radius: 12px; background: var(--terra); color: white; font: 600 16px system-ui, sans-serif; cursor: pointer; }
+    #error { min-height: 24px; margin: 12px 0 0; color: var(--bad); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Мониторинг сервиса</h1>
+    <p>Введи пароль доступа, заданный при настройке мониторинга.</p>
+    <form id="login">
+      <label for="password">Пароль</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus />
+      <button type="submit">Войти</button>
+      <p id="error" role="alert" aria-live="polite"></p>
+    </form>
+  </main>
+  <script>
+    const form = document.getElementById('login');
+    const error = document.getElementById('error');
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      error.textContent = '';
+      const button = form.querySelector('button');
+      button.disabled = true;
+      try {
+        const response = await fetch('/api/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+          body: new URLSearchParams(new FormData(form)),
+          cache: 'no-store'
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Не удалось войти. Попробуй ещё раз.');
+        window.location.replace('/admin/monitoring');
+      } catch (cause) {
+        error.textContent = cause.message || 'Не удалось войти. Проверь соединение.';
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
