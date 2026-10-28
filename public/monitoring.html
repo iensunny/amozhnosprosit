@@ -86,6 +86,7 @@
       $('load-error').style.display = 'none';
       try {
         const response = await fetch('/api/admin/monitoring', { cache: 'no-store' });
+        if (response.status === 401) { window.location.replace('/admin/monitoring'); return; }
         if (!response.ok) throw new Error(response.status === 401 ? 'Нужна повторная авторизация. Обновите страницу.' : 'Не удалось получить сводку. Попробуйте ещё раз.');
         const data = await response.json();
         setStatus('service', data.service); setStatus('database', data.database);
