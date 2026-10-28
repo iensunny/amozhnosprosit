@@ -42,6 +42,9 @@ jobs:
           install -d -m 700 ~/.ssh
           printf '%s\n' "$SPRINTBOX_SSH_KEY" > ~/.ssh/sprintbox_key
           chmod 600 ~/.ssh/sprintbox_key
+          fingerprint="$(ssh-keygen -y -f ~/.ssh/sprintbox_key | ssh-keygen -lf - | awk '{print $2}')"
+          printf 'Deploy key fingerprint: %s\\n' "$fingerprint"
+          test "$fingerprint" = 'SHA256:mQ48R/p8zpmwu7UBL+1x+Z5Q90MYYODUgO6hbjsXO5o'
           printf '%s\n' '85.235.205.153 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBKcVXJ+2Eq1/5nSowRGKCYYDhLKY04bwPYlUMTZtv+GaXJHjdventL8aL9Wsa0WTMWjFg8YFXPk3MTezF3kEBzc=' > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
