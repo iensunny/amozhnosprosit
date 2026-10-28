@@ -1,13 +1,13 @@
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
-import { extname, join, normalize, resolve } from "node:path";
+import { dirname, extname, join, normalize, resolve } from "node:path";
 import { Readable } from "node:stream";
 import cron from "node-cron";
-import mysql from "mysql2/promise";
+import Database from "better-sqlite3";
 import worker from "../recovery/cloudflare-worker-2026-10-15.mjs";
-import { D1MysqlAdapter } from "./d1-mysql-adapter.mjs";
+import { D1SqliteAdapter } from "./d1-sqlite-adapter.mjs";
 
 const root = resolve("public");
 const mime = {
@@ -68,80 +68,36 @@ for (const variable of required) {
 const statusPasswordHash = process.env.STATUS_DASHBOARD_PASSWORD_SHA256 || "7eba24edbe0db6d9b02444dfee688662434e57922426e51840ed7194ed066e0a";
 const webhookSecret = createHmac("sha256", process.env.MAX_BOT_TOKEN).update("amozhnosprosit:max-webhook:v1").digest("hex");
 const publicAppOrigin = (process.env.PUBLIC_APP_URL || "https://79-174-82-103.regru.cloud").replace(/\/$/, "");
+const maxWebhookSetupEnabled = process.env.MAX_WEBHOOK_SETUP_ENABLED !== "false";
+const scheduledJobsEnabled = process.env.ENABLE_SCHEDULED_JOBS !== "false";
 
-function mysqlOptions() {
-  if (process.env.DATABASE_URL) {
-    const url = new URL(process.env.DATABASE_URL);
-    if (url.protocol !== "mysql:") throw new Error("DATABASE_URL must use the mysql:// scheme");
-    return {
-      host: url.hostname,
-      port: Number(url.port || 3306),
-      user: decodeURIComponent(url.username),
-      password: decodeURIComponent(url.password),
-      database: decodeURIComponent(url.pathname.slice(1))
-    };
-  }
-
-  const required = ["MYSQL_HOST", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE"];
-  for (const variable of required) {
-    if (!process.env[variable]) throw new Error(`Set DATABASE_URL or all of: ${required.join(", ")}`);
-  }
-  return {
-    host: process.env.MYSQL_HOST,
-    port: Number(process.env.MYSQL_PORT || 3306),
-    user: process.env.MYSQL_USER,
-    password: process.env.MYSQL_PASSWORD,
-    database: process.env.MYSQL_DATABASE
-  };
-}
-
-const pool = mysql.createPool({
-  ...mysqlOptions(),
-  waitForConnections: true,
-  connectionLimit: Number(process.env.MYSQL_CONNECTION_LIMIT || 5),
-  queueLimit: 0,
-  charset: "utf8mb4",
-  timezone: "Z"
-});
-await pool.query("SELECT 1");
-let telemetryReady = false;
-try {
-  await pool.query(`CREATE TABLE IF NOT EXISTS telemetry_events (
-  id CHAR(36) NOT NULL,
-  created_at VARCHAR(32) NOT NULL,
-  event_name VARCHAR(24) NOT NULL,
-  stage VARCHAR(32) NOT NULL,
-  result VARCHAR(16) NOT NULL,
-  duration_ms INT UNSIGNED NULL,
-  http_status SMALLINT UNSIGNED NULL,
-  app_version VARCHAR(24) NULL,
-  platform VARCHAR(16) NULL,
-  PRIMARY KEY (id),
-  KEY telemetry_created_at (created_at),
-  KEY telemetry_summary (event_name, stage, result, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
-  telemetryReady = true;
-} catch (error) {
-  // Observability is additive; a restricted DB account must not prevent the app from starting.
-  console.error("Telemetry table is unavailable; app will start without telemetry", error?.code || error?.name || "Error");
-}
-let welcomeTableReady = false;
+const databasePath = resolve(process.env.SQLITE_PATH || "data/amozhnosprosit.sqlite");
+mkdirSync(dirname(databasePath), { recursive: true });
+const database = new Database(databasePath);
+database.pragma("journal_mode = WAL");
+database.pragma("foreign_keys = ON");
+database.pragma("busy_timeout = 5000");
+database.exec(readFileSync(resolve("database/sqlite-schema.sql"), "utf8"));
+const pool = {
+  query(sql, values = []) {
+    const statement = database.prepare(sql);
+    return Promise.resolve([statement.reader ? statement.all(...values) : statement.run(...values)]);
+  },
+  execute(sql, values = []) {
+    const statement = database.prepare(sql);
+    return Promise.resolve(statement.reader
+      ? [statement.all(...values)]
+      : [{ affectedRows: statement.run(...values).changes }]);
+  },
+  end() { database.close(); return Promise.resolve(); }
+};
+await database.prepare("SELECT 1").get();
+const telemetryReady = true;
+const welcomeTableReady = true;
 let maxWelcomeWebhookConfigured = false;
-try {
-  await pool.query(`CREATE TABLE IF NOT EXISTS bot_welcomes (
-  max_user_id VARCHAR(128) NOT NULL,
-  status VARCHAR(16) NOT NULL,
-  updated_at VARCHAR(32) NOT NULL,
-  PRIMARY KEY (max_user_id),
-  KEY bot_welcomes_updated_at (updated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
-  welcomeTableReady = true;
-} catch (error) {
-  console.error("MAX welcome table is unavailable", error?.code || error?.name || "Error");
-}
 const env = {
   ASSETS: { fetch: staticFetch },
-  DB: new D1MysqlAdapter(pool),
+  DB: new D1SqliteAdapter(database),
   MAX_BOT_NAME: process.env.MAX_BOT_NAME || "se14681938_bot",
   MAX_BOT_TOKEN: process.env.MAX_BOT_TOKEN,
   MAX_WEBHOOK_SECRET: webhookSecret,
@@ -288,9 +244,11 @@ async function ensureMaxWelcomeSubscription() {
   }
 }
 
-cron.schedule("0 * * * *", () => {
-  worker.scheduled({}, env, { waitUntil: promise => promise.catch(error => console.error("Scheduled task failed", error)) });
-});
+if (scheduledJobsEnabled) {
+  cron.schedule("0 * * * *", () => {
+    worker.scheduled({}, env, { waitUntil: promise => promise.catch(error => console.error("Scheduled task failed", error)) });
+  });
+}
 
 async function purgeExpiredDiagnostics() {
   const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -302,12 +260,16 @@ async function purgeExpiredDiagnostics() {
   }
 }
 
-void purgeExpiredDiagnostics();
-cron.schedule("* * * * *", () => void purgeExpiredDiagnostics());
+if (scheduledJobsEnabled) {
+  void purgeExpiredDiagnostics();
+  cron.schedule("* * * * *", () => void purgeExpiredDiagnostics());
+}
 
-server.listen(Number(process.env.PORT || 8080), "0.0.0.0", () => {
+server.listen(Number(process.env.PORT || 8080), process.env.HOST || "0.0.0.0", () => {
   console.log(`Listening on port ${process.env.PORT || 8080}; telemetry ${telemetryReady ? "enabled" : "disabled"}`);
-  void ensureMaxWelcomeSubscription();
+  if (maxWebhookSetupEnabled) void ensureMaxWelcomeSubscription();
+  else console.log("MAX webhook setup disabled by configuration");
+  if (!scheduledJobsEnabled) console.log("Scheduled jobs disabled by configuration");
 });
 
 async function shutdown() {

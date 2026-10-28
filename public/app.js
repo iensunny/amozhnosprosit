@@ -7,8 +7,8 @@ const LOCAL_PREVIEW = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(locati
 let maxBotName = 'se14681938_bot';
 const LOCAL_PREVIEW_PAIRS = 'amozhno-local-preview-pairs-v1';
 const LEGAL_DOCUMENT_URLS = {
-  terms: 'https://79-174-82-103.regru.cloud/terms-of-use.html',
-  privacy: 'https://79-174-82-103.regru.cloud/privacy-policy.html'
+  terms: '/terms-of-use.html',
+  privacy: '/privacy-policy.html'
 };
 const resetLocalPreview = LOCAL_PREVIEW && new URLSearchParams(location.search).has('reset-preview');
 let STORE = BASE_STORE;
